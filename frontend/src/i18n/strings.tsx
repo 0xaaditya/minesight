@@ -1,0 +1,195 @@
+import { createContext, useContext, useState, type ReactNode } from 'react'
+
+export type Lang = 'en' | 'hi' | 'mr'
+
+const STRINGS = {
+  en: {
+    poweredBy: 'Powered by Lodestar',
+    searchPlaceholder: 'Search vehicle or driver…',
+    home: 'Home',
+    liveMap: 'Live Map',
+    vehiclesDevices: 'Vehicles & Devices',
+    overallFleetStatus: 'Overall Fleet Status',
+    activeFleet: 'Active',
+    inactiveFleet: 'Inactive',
+    todayTrips: "Today's Trips",
+    todayFuel: "Today's Fuel",
+    todayIncidents: "Today's Incidents",
+    equipmentLocation: 'Equipment Location',
+    insideZones: 'Inside zones',
+    outsideZones: 'Outside zones',
+    fleetWheel: 'Fleet Wheel',
+    wheelSub: 'Live status by equipment type · click a segment',
+    wheel: 'Wheel',
+    grid: 'Grid',
+    liveEvents: 'Live Events',
+    equipment: 'Equipment',
+    newZone: 'New Zone',
+    staleWarn: 'No signal for over 10 min — last position may be stale.',
+    speed: 'Speed',
+    cyclesToday: 'Cycles today',
+    tripStatus: 'Trip status',
+    fuelLevel: 'Fuel level',
+    driverSession: 'Driver session',
+    quickActions: 'Quick actions',
+    replayToday: 'Replay today',
+    fuelCurve: 'Fuel curve',
+    requestSnap: 'Request snapshot',
+    comingSoon: 'Coming soon',
+    notAvailableYet: 'Not available yet',
+    notWiredFuel: 'Fuel-truth sensing not wired to this vehicle yet',
+    notWiredDriver: 'Driver sessions (RFID/iButton) not wired yet',
+    notWiredTrips: 'Trip-cycle summary not wired to this screen yet',
+    notWiredFuelSummary: 'Fuel classifier not wired yet',
+    notWiredIncidents: 'Incident detection not wired yet',
+    notWiredEvents: 'Live event feed not wired yet',
+    running: 'Running',
+    idle: 'Idle',
+    breakdown: 'Breakdown',
+    no_comm: 'No-Comm',
+    not_installed: 'Not Installed',
+    unknown: 'Unknown',
+    all: 'All',
+    noDriver: 'No active driver',
+    lastFix: 'Last fix',
+    register: 'Register',
+    registerVehicle: 'Register vehicle',
+    assetId: 'Asset ID',
+  },
+  hi: {
+    poweredBy: 'लोडस्टार द्वारा',
+    searchPlaceholder: 'वाहन या चालक खोजें…',
+    home: 'होम',
+    liveMap: 'लाइव मैप',
+    vehiclesDevices: 'वाहन और डिवाइस',
+    overallFleetStatus: 'कुल फ़्लीट स्थिति',
+    activeFleet: 'सक्रिय',
+    inactiveFleet: 'निष्क्रिय',
+    todayTrips: 'आज के ट्रिप',
+    todayFuel: 'आज का ईंधन',
+    todayIncidents: 'आज की घटनाएँ',
+    equipmentLocation: 'उपकरण स्थान',
+    insideZones: 'ज़ोन के अंदर',
+    outsideZones: 'ज़ोन के बाहर',
+    fleetWheel: 'फ़्लीट व्हील',
+    wheelSub: 'उपकरण प्रकार अनुसार लाइव स्थिति · सेगमेंट दबाएँ',
+    wheel: 'व्हील',
+    grid: 'ग्रिड',
+    liveEvents: 'लाइव घटनाएँ',
+    equipment: 'उपकरण',
+    newZone: 'नया ज़ोन',
+    staleWarn: '10 मिनट से कोई संकेत नहीं — अंतिम स्थिति पुरानी हो सकती है।',
+    speed: 'गति',
+    cyclesToday: 'आज के चक्र',
+    tripStatus: 'ट्रिप स्थिति',
+    fuelLevel: 'ईंधन स्तर',
+    driverSession: 'चालक सत्र',
+    quickActions: 'त्वरित क्रियाएँ',
+    replayToday: 'आज रीप्ले',
+    fuelCurve: 'ईंधन वक्र',
+    requestSnap: 'स्नैपशॉट माँगें',
+    comingSoon: 'जल्द आ रहा है',
+    notAvailableYet: 'अभी उपलब्ध नहीं',
+    notWiredFuel: 'इस वाहन के लिए ईंधन सेंसिंग अभी जुड़ी नहीं है',
+    notWiredDriver: 'चालक सत्र (RFID/iButton) अभी जुड़े नहीं हैं',
+    notWiredTrips: 'ट्रिप-चक्र सारांश अभी इस स्क्रीन से नहीं जुड़ा',
+    notWiredFuelSummary: 'ईंधन क्लासिफ़ायर अभी नहीं जुड़ा',
+    notWiredIncidents: 'घटना पहचान अभी नहीं जुड़ी',
+    notWiredEvents: 'लाइव घटना फ़ीड अभी नहीं जुड़ी',
+    running: 'चालू',
+    idle: 'निष्क्रिय',
+    breakdown: 'ख़राब',
+    no_comm: 'नो-कॉम',
+    not_installed: 'स्थापित नहीं',
+    unknown: 'अज्ञात',
+    all: 'सभी',
+    noDriver: 'कोई चालक नहीं',
+    lastFix: 'अंतिम फ़िक्स',
+    register: 'पंजीकृत करें',
+    registerVehicle: 'वाहन पंजीकृत करें',
+    assetId: 'एसेट आईडी',
+  },
+  mr: {
+    poweredBy: 'लोडस्टार द्वारे',
+    searchPlaceholder: 'वाहन किंवा चालक शोधा…',
+    home: 'होम',
+    liveMap: 'लाइव्ह नकाशा',
+    vehiclesDevices: 'वाहने आणि डिव्हाइसेस',
+    overallFleetStatus: 'एकूण फ्लीट स्थिती',
+    activeFleet: 'सक्रिय',
+    inactiveFleet: 'निष्क्रिय',
+    todayTrips: 'आजच्या ट्रिप',
+    todayFuel: 'आजचे इंधन',
+    todayIncidents: 'आजच्या घटना',
+    equipmentLocation: 'उपकरण स्थान',
+    insideZones: 'झोनमध्ये',
+    outsideZones: 'झोनबाहेर',
+    fleetWheel: 'फ्लीट व्हील',
+    wheelSub: 'उपकरण प्रकारानुसार थेट स्थिती · सेगमेंट दाबा',
+    wheel: 'व्हील',
+    grid: 'ग्रिड',
+    liveEvents: 'थेट घटना',
+    equipment: 'उपकरणे',
+    newZone: 'नवा झोन',
+    staleWarn: '10 मिनिटे सिग्नल नाही — शेवटची स्थिती जुनी असू शकते.',
+    speed: 'वेग',
+    cyclesToday: 'आजचे चक्र',
+    tripStatus: 'ट्रिप स्थिती',
+    fuelLevel: 'इंधन पातळी',
+    driverSession: 'चालक सत्र',
+    quickActions: 'त्वरित क्रिया',
+    replayToday: 'आज रीप्ले',
+    fuelCurve: 'इंधन वक्र',
+    requestSnap: 'स्नॅपशॉट मागवा',
+    comingSoon: 'लवकरच येत आहे',
+    notAvailableYet: 'अजून उपलब्ध नाही',
+    notWiredFuel: 'या वाहनासाठी इंधन सेन्सिंग अजून जोडलेले नाही',
+    notWiredDriver: 'चालक सत्र (RFID/iButton) अजून जोडलेले नाहीत',
+    notWiredTrips: 'ट्रिप-सायकल सारांश अजून या स्क्रीनला जोडलेला नाही',
+    notWiredFuelSummary: 'इंधन क्लासिफायर अजून जोडलेले नाही',
+    notWiredIncidents: 'घटना ओळख अजून जोडलेली नाही',
+    notWiredEvents: 'थेट घटना फीड अजून जोडलेली नाही',
+    running: 'सुरू',
+    idle: 'निष्क्रिय',
+    breakdown: 'बिघाड',
+    no_comm: 'नो-कॉम',
+    not_installed: 'स्थापित नाही',
+    unknown: 'अज्ञात',
+    all: 'सर्व',
+    noDriver: 'चालक नाही',
+    lastFix: 'शेवटचा फिक्स',
+    register: 'नोंदणी करा',
+    registerVehicle: 'वाहन नोंदवा',
+    assetId: 'असेट आयडी',
+  },
+} as const satisfies Record<Lang, Record<string, string>>
+
+export type StringKey = keyof (typeof STRINGS)['en']
+
+const LangContext = createContext<{ lang: Lang; setLang: (lang: Lang) => void } | null>(null)
+
+const LANG_STORAGE_KEY = 'minesight.lang'
+
+export function LangProvider({ children }: { children: ReactNode }) {
+  const [lang, setLangState] = useState<Lang>(() => {
+    const stored = localStorage.getItem(LANG_STORAGE_KEY)
+    return stored === 'hi' || stored === 'mr' ? stored : 'en'
+  })
+  const setLang = (next: Lang) => {
+    localStorage.setItem(LANG_STORAGE_KEY, next)
+    setLangState(next)
+  }
+  return <LangContext.Provider value={{ lang, setLang }}>{children}</LangContext.Provider>
+}
+
+export function useLang() {
+  const ctx = useContext(LangContext)
+  if (!ctx) throw new Error('useLang must be used within a LangProvider')
+  return ctx
+}
+
+export function useT() {
+  const { lang } = useLang()
+  const dict = STRINGS[lang]
+  return (key: StringKey): string => dict[key] ?? STRINGS.en[key]
+}

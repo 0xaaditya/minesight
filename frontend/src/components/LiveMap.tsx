@@ -5,13 +5,13 @@ import {
   MapContainer,
   Marker,
   Polygon,
-  Popup,
   TileLayer,
   Tooltip,
   useMapEvents,
 } from 'react-leaflet'
-import type { TripCycleStatus, Vehicle, VehicleStatus, VehicleType, Zone, ZoneType } from '../api/client'
-import { todayIST, useCreateZone, useDeleteZone, useUpdateZone, useVehicleTrips, useZones } from '../api/client'
+import type { Vehicle, VehicleStatus, VehicleType, Zone, ZoneType } from '../api/client'
+import { useCreateZone, useDeleteZone, useUpdateZone, useZones } from '../api/client'
+import { statusMeta, ZONE_META } from '../lib/status'
 
 // No Google Maps API per CLAUDE.md — Esri World Imagery (free) is the locked choice.
 const ESRI_WORLD_IMAGERY =
@@ -24,22 +24,6 @@ const DEFAULT_CENTER: [number, number] = [18.6129, 73.7433] // falls back near t
 // independent of any static Zone polygon (CLAUDE.md: "dynamic excavator zones").
 const EXCAVATOR_RADIUS_M = 50
 const EXCAVATOR_CIRCLE_COLOR = '#1abc9c'
-
-// Samarth-style 5-state taxonomy colors (CLAUDE.md dashboard spec).
-const STATUS_COLORS: Record<VehicleStatus, string> = {
-  running: '#2ecc71',
-  idle: '#f1c40f',
-  breakdown: '#e74c3c',
-  no_comm: '#7f8c8d',
-  not_installed: '#34495e',
-}
-
-const ZONE_COLORS: Record<ZoneType, string> = {
-  loading: '#3498db',
-  dumping: '#e67e22',
-  parking: '#9b59b6',
-  no_go: '#e74c3c',
-}
 
 // LOADING is deliberately not offered here — an excavator vehicle's own live position
 // already creates a moving loading circle automatically (trip_engine.py:
@@ -71,7 +55,7 @@ const VEHICLE_TYPE_SHAPES: Record<VehicleType, string> = {
 }
 
 function vehicleIcon(assetId: string, vehicleType: VehicleType, status: VehicleStatus | null): L.DivIcon {
-  const color = status ? STATUS_COLORS[status] : '#3498db'
+  const color = statusMeta(status).color
   const shape = VEHICLE_TYPE_SHAPES[vehicleType]
   return L.divIcon({
     className: 'vehicle-marker',
@@ -84,37 +68,6 @@ function vehicleIcon(assetId: string, vehicleType: VehicleType, status: VehicleS
     iconSize: [30, 23],
     iconAnchor: [15, 11],
   })
-}
-
-function tripStatusLabel(status: TripCycleStatus | null): string {
-  if (!status) return '—'
-  return status.charAt(0).toUpperCase() + status.slice(1)
-}
-
-// Trip counting/date-bucketing is only fetched for the popup a user actually opens
-// (`enabled` gates the query) — fetching this for every vehicle on every 5s poll would
-// multiply request volume across a 10-50 vehicle fleet for data nobody's looking at yet.
-function VehiclePopupDetail({ vehicle, active }: { vehicle: Vehicle; active: boolean }) {
-  const { data: trips, isLoading } = useVehicleTrips(vehicle.id, todayIST(), active)
-  const pos = vehicle.latest_position!
-  const cyclesToday = trips?.filter((t) => t.status === 'completed').length
-
-  return (
-    <>
-      <strong>{vehicle.asset_id}</strong> ({vehicle.vehicle_type})
-      <br />
-      Status: <span style={{ color: vehicle.status ? STATUS_COLORS[vehicle.status] : undefined }}>
-        {vehicle.status ?? '—'}
-      </span>
-      {vehicle.trip_status && <> · Trip: {tripStatusLabel(vehicle.trip_status)}</>}
-      <br />
-      Cycles today: {active ? (isLoading ? '…' : (cyclesToday ?? '—')) : '—'}
-      <br />
-      Speed: {pos.speed_knots?.toFixed(1) ?? '—'} kn
-      <br />
-      Fix time: {new Date(pos.event_time).toLocaleString()}
-    </>
-  )
 }
 
 const CLOSE_RING_PIXEL_THRESHOLD = 12
@@ -228,7 +181,7 @@ function ZoneEditorPanel({
         <ul className="zone-editor-list">
           {zones.map((zone) => (
             <li key={zone.id}>
-              <span style={{ color: ZONE_COLORS[zone.zone_type] }}>●</span> {zone.name}{' '}
+              <span style={{ color: ZONE_META[zone.zone_type].color }}>●</span> {zone.name}{' '}
               <span className="zone-editor-type">({zone.zone_type})</span>
               <div className="zone-editor-row-actions">
                 <button onClick={() => startRedraw(zone)}>Redraw</button>
@@ -327,9 +280,14 @@ function ZoneEditorPanel({
   )
 }
 
-export function LiveMap({ vehicles }: { vehicles: Vehicle[] }) {
+export function LiveMap({
+  vehicles,
+  onSelectVehicle,
+}: {
+  vehicles: Vehicle[]
+  onSelectVehicle: (vehicleId: string) => void
+}) {
   const { data: zones } = useZones()
-  const [openVehicleId, setOpenVehicleId] = useState<string | null>(null)
   const [draw, setDraw] = useState<DrawState>({ mode: 'idle' })
 
   const withPosition = vehicles.filter((v) => v.latest_position !== null)
@@ -349,7 +307,7 @@ export function LiveMap({ vehicles }: { vehicles: Vehicle[] }) {
             key={zone.id}
             // GeoJSON is [lon, lat]; Leaflet wants [lat, lon].
             positions={zone.geometry.coordinates[0].map(([lon, lat]) => [lat, lon] as [number, number])}
-            pathOptions={{ color: ZONE_COLORS[zone.zone_type], weight: 2, fillOpacity: 0.1 }}
+            pathOptions={{ color: ZONE_META[zone.zone_type].color, weight: 2, fillOpacity: 0.1 }}
           >
             <Tooltip sticky>{zone.name} ({zone.zone_type})</Tooltip>
           </Polygon>
@@ -382,14 +340,9 @@ export function LiveMap({ vehicles }: { vehicles: Vehicle[] }) {
               position={[pos.latitude, pos.longitude]}
               icon={vehicleIcon(vehicle.asset_id, vehicle.vehicle_type, vehicle.status)}
               eventHandlers={{
-                popupopen: () => setOpenVehicleId(vehicle.id),
-                popupclose: () => setOpenVehicleId((id) => (id === vehicle.id ? null : id)),
+                click: () => onSelectVehicle(vehicle.id),
               }}
-            >
-              <Popup>
-                <VehiclePopupDetail vehicle={vehicle} active={openVehicleId === vehicle.id} />
-              </Popup>
-            </Marker>
+            />
           )
         })}
 

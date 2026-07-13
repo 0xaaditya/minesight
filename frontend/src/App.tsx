@@ -1,15 +1,23 @@
 import { Route, BrowserRouter, Routes } from 'react-router-dom'
-import { VehiclesPage } from './pages/VehiclesPage'
+import { Shell } from './layout/Shell'
+import { HomePage } from './pages/HomePage'
 import { MapPage } from './pages/MapPage'
+import { VehiclesPage } from './pages/VehiclesPage'
+import { LangProvider } from './i18n/strings'
 
 function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<VehiclesPage />} />
-        <Route path="/map" element={<MapPage />} />
-      </Routes>
-    </BrowserRouter>
+    <LangProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<Shell />}>
+            <Route index element={<HomePage />} />
+            <Route path="map" element={<MapPage />} />
+            <Route path="vehicles" element={<VehiclesPage />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
+    </LangProvider>
   )
 }
 
