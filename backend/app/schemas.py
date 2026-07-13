@@ -142,8 +142,15 @@ class TripOut(BaseModel):
     loaded_at: Optional[datetime]
     dumped_at: Optional[datetime]
     completed_at: Optional[datetime]
+    haul_distance_m: Optional[float]  # lead distance: loaded -> dumped breadcrumb path
+    trip_distance_m: Optional[float]  # full trip-row path: started -> completed
     status: TripRowStatus
     had_anomalous_entry: bool
+    # Resolved by the router (not ORM columns): which excavator filled this truck, and —
+    # on the excavator-facing /loads view — which truck was filled. Asset IDs, not UUIDs,
+    # because that's what the dashboard displays.
+    load_excavator_asset_id: Optional[str] = None
+    vehicle_asset_id: Optional[str] = None
 
     @computed_field
     @property

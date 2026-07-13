@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Position, Vehicle
 from app.schemas import PositionOut
+from app.time_utils import ist_day_bounds
 
 router = APIRouter(prefix="/vehicles", tags=["positions"])
 
@@ -17,13 +18,20 @@ router = APIRouter(prefix="/vehicles", tags=["positions"])
 def list_positions(
     vehicle_id: uuid.UUID,
     since: Optional[datetime] = Query(default=None),
+    date_: Optional[date] = Query(default=None, alias="date"),
     db: Session = Depends(get_db),
 ):
+    """`date` (IST day, for route replay) takes precedence over `since` — same one-or-
+    the-other convention as /trips. Positions never delete inside the 90-day retention
+    window (CLAUDE.md), so an old date always has a full breadcrumb to replay."""
     if not db.get(Vehicle, vehicle_id):
         raise HTTPException(status_code=404, detail="vehicle not found")
 
     stmt = select(Position).where(Position.vehicle_id == vehicle_id)
-    if since is not None:
+    if date_ is not None:
+        start, end = ist_day_bounds(date_)
+        stmt = stmt.where(Position.event_time >= start, Position.event_time < end)
+    elif since is not None:
         stmt = stmt.where(Position.event_time >= since)
     stmt = stmt.order_by(Position.event_time.asc())
     return db.scalars(stmt).all()

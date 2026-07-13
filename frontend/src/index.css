@@ -840,6 +840,98 @@ body {
   font-family: inherit;
 }
 
+.ls-drawer-actions button:not(:disabled) {
+  cursor: pointer;
+  color: #1a1a1a;
+  border-color: #d6d6d1;
+}
+
+.ls-drawer-actions button:not(:disabled):hover {
+  background: #f7f7f5;
+}
+
+.ls-trip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ls-trip-row {
+  border: 1px solid #e5e5e1;
+  border-radius: 8px;
+  padding: 7px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ls-trip-row-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.ls-trip-cycle {
+  font-weight: 800;
+  min-width: 24px;
+}
+
+.ls-trip-times {
+  flex: 1;
+  color: #6b7075;
+  font-variant-numeric: tabular-nums;
+}
+
+.ls-trip-status {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+
+.ls-trip-status-completed {
+  background: #f0fdf4;
+  color: #16a34a;
+}
+
+.ls-trip-status-in_progress {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.ls-trip-status-aborted {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.ls-trip-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: #9aa0a6;
+  font-variant-numeric: tabular-nums;
+}
+
+.ls-trip-anom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #dc2626;
+  font-weight: 600;
+}
+
+/* Cross-reference chip inside a trip/load row: the excavator that filled a truck's
+   trip, or the truck an excavator's load row refers to. */
+.ls-trip-excavator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #4b5157;
+  font-weight: 700;
+}
+
 /* ---------- live map page ---------- */
 
 .ls-map-page {
@@ -985,6 +1077,93 @@ body {
   font-family: inherit;
 }
 
+.ls-replay-panel {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 950;
+  width: 260px;
+  background: rgba(20, 22, 26, 0.94);
+  border-radius: 10px;
+  color: #fff;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.ls-replay-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 10px 10px 12px;
+  font-size: 14px;
+  font-weight: 700;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.ls-replay-back {
+  background: transparent;
+  border: none;
+  color: #fff;
+}
+
+.ls-replay-body {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ls-replay-vehicle {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.ls-replay-empty {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.ls-replay-slider {
+  width: 100%;
+  accent-color: #2563eb;
+}
+
+.ls-replay-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.75);
+  font-variant-numeric: tabular-nums;
+}
+
+.ls-replay-controls .ls-icon-btn {
+  width: 26px;
+  height: 26px;
+  background: transparent;
+  border: none;
+  color: #fff;
+}
+
+.ls-replay-controls .ls-icon-btn:disabled {
+  color: rgba(255, 255, 255, 0.3);
+  cursor: default;
+}
+
+.ls-replay-count {
+  min-width: 40px;
+}
+
+.ls-replay-play {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+}
+
+.ls-replay-time {
+  margin-left: auto;
+}
+
 .ls-map-satellite-badge {
   position: absolute;
   bottom: 12px;
@@ -1077,6 +1256,43 @@ body {
   position: relative;
   height: 100%;
   width: 100%;
+}
+
+.zone-editor-toggle {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1000;
+  height: 30px;
+  padding: 0 11px;
+  border: none;
+  background: #fff;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  color: #1f2124;
+  font-family: inherit;
+}
+
+.zone-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.35rem;
+}
+
+.zone-editor-panel .zone-editor-close {
+  border: none;
+  background: transparent;
+  padding: 0.2rem;
+  display: flex;
+  align-items: center;
+  color: #6b7075;
 }
 
 .zone-editor-panel {

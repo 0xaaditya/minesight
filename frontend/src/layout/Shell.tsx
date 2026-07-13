@@ -1,5 +1,5 @@
 import { useEffect, useState, type ComponentType } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Bell,
   BellRing,
@@ -24,8 +24,10 @@ import {
   Users,
 } from 'lucide-react'
 import { useLang, useT, type Lang } from '../i18n/strings'
-import { useVehicles } from '../api/client'
+import { todayIST, useVehicles } from '../api/client'
 import { VehicleDrawer } from '../components/VehicleDrawer'
+
+export type ReplayRequest = { vehicleId: string; date: string }
 
 type NavItem = {
   to: string | null
@@ -107,14 +109,24 @@ function useISTClock() {
 export function Shell() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null)
+  const [replay, setReplay] = useState<ReplayRequest | null>(null)
   const { lang, setLang } = useLang()
   const T = useT()
   const clock = useISTClock()
   const location = useLocation()
+  const navigate = useNavigate()
   const { data: vehicles } = useVehicles()
 
   const breadcrumbKey = BREADCRUMB[location.pathname] ?? 'home'
   const selectedVehicle = vehicles?.find((v) => v.id === selectedVehicleId) ?? null
+
+  // Replay only makes sense on the map — jump there and close the drawer so the
+  // replay panel (which lives inside MapPage/LiveMap) is immediately visible.
+  const startReplay = (vehicleId: string) => {
+    setReplay({ vehicleId, date: todayIST() })
+    setSelectedVehicleId(null)
+    navigate('/map')
+  }
 
   return (
     <div className="ls-shell">
@@ -203,12 +215,16 @@ export function Shell() {
         </header>
 
         <div className="ls-content">
-          <Outlet context={{ openVehicle: setSelectedVehicleId }} />
+          <Outlet context={{ openVehicle: setSelectedVehicleId, replay, setReplay }} />
         </div>
       </div>
 
       {selectedVehicle && (
-        <VehicleDrawer vehicle={selectedVehicle} onClose={() => setSelectedVehicleId(null)} />
+        <VehicleDrawer
+          vehicle={selectedVehicle}
+          onClose={() => setSelectedVehicleId(null)}
+          onReplay={startReplay}
+        />
       )}
     </div>
   )

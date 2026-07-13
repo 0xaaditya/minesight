@@ -136,6 +136,10 @@ class Position(Base):
     course: Mapped[float] = mapped_column(Float, nullable=True)
     hdop: Mapped[float] = mapped_column(Float, nullable=True)
     satellites: Mapped[int] = mapped_column(Integer, nullable=True)
+    # Traccar's cumulative odometer (DistanceHandler's totalDistance attribute, meters).
+    # Distance-between-two-moments is a delta of this, not a re-summed breadcrumb —
+    # we don't rebuild what Traccar provides (CLAUDE.md).
+    total_distance_m: Mapped[float] = mapped_column(Float, nullable=True)
     raw: Mapped[dict] = mapped_column(JSONB, nullable=True)
 
     vehicle: Mapped["Vehicle"] = relationship(back_populates="positions")
@@ -206,6 +210,16 @@ class Trip(Base):
     loaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     dumped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Lead distance: path distance actually driven from the load point to the dump point
+    # (mining "lead"), summed over the GPS breadcrumb between loaded_at and dumped_at.
+    # Set at the cycle++ moment (DUMPING entry). Null for anomalous trips with no load ref.
+    haul_distance_m: Mapped[float] = mapped_column(Float, nullable=True)
+    # Full trip-row path distance (started_at -> completed_at, i.e. LOADING entry through
+    # DUMPING exit). The empty return leg back to the next loading point belongs to the
+    # NEXT trip's pre-loading travel, so a full dump-to-dump round trip is this trip's
+    # haul + the next trip's approach — reporting can join them later without re-deriving.
+    trip_distance_m: Mapped[float] = mapped_column(Float, nullable=True)
 
     status: Mapped[TripRowStatus] = mapped_column(
         _enum_column(TripRowStatus), nullable=False, default=TripRowStatus.IN_PROGRESS

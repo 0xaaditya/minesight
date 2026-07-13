@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app import trip_engine
 from app.database import get_db
-from app.models import Organization, Position, Vehicle, VehicleTripState
+from app.models import Organization, Position, Vehicle, VehicleTripState, VehicleType
 from app.schemas import PositionOut, VehicleCreate, VehicleOut, derive_vehicle_type
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
@@ -57,8 +57,14 @@ def _with_latest_position(vehicle: Vehicle, db: Session) -> VehicleOut:
     trip_state = db.scalar(
         select(VehicleTripState).where(VehicleTripState.vehicle_id == vehicle.id)
     )
+    now = datetime.now(timezone.utc)
+    is_paired = (
+        trip_engine.excavator_is_paired(db, vehicle.id, now)
+        if vehicle.vehicle_type == VehicleType.EXCAVATOR
+        else False
+    )
     out = VehicleOut.model_validate(vehicle)
     out.latest_position = PositionOut.model_validate(latest) if latest else None
     out.trip_status = trip_state.trip_status if trip_state else None
-    out.status = trip_engine.compute_vehicle_status(latest, trip_state, datetime.now(timezone.utc))
+    out.status = trip_engine.compute_vehicle_status(latest, trip_state, now, is_paired)
     return out

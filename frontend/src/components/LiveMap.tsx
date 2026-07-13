@@ -1,17 +1,25 @@
-import { useState, type Dispatch, type SetStateAction } from 'react'
+import { Fragment, useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 import L from 'leaflet'
 import {
   Circle,
   MapContainer,
   Marker,
   Polygon,
+  Polyline,
   TileLayer,
   Tooltip,
+  useMap,
   useMapEvents,
+  ZoomControl,
 } from 'react-leaflet'
-import type { Vehicle, VehicleStatus, VehicleType, Zone, ZoneType } from '../api/client'
+import { Hexagon, X } from 'lucide-react'
+import type { Position, Vehicle, VehicleStatus, VehicleType, Zone, ZoneType } from '../api/client'
 import { useCreateZone, useDeleteZone, useUpdateZone, useZones } from '../api/client'
 import { statusMeta, ZONE_META } from '../lib/status'
+import { useT } from '../i18n/strings'
+
+const REPLAY_TRAIL_COLOR = '#2563EB'
+const REPLAY_MARKER_COLOR = '#2563EB'
 
 // No Google Maps API per CLAUDE.md — Esri World Imagery (free) is the locked choice.
 const ESRI_WORLD_IMAGERY =
@@ -20,9 +28,12 @@ const ESRI_WORLD_IMAGERY =
 const DEFAULT_CENTER: [number, number] = [18.6129, 73.7433] // falls back near the field-test site
 
 // Mirrors EXCAVATOR_ENTER_RADIUS_M in backend/app/trip_engine.py — a truck inside this
-// circle around an excavator's live position is a loading event paired to that excavator,
-// independent of any static Zone polygon (CLAUDE.md: "dynamic excavator zones").
-const EXCAVATOR_RADIUS_M = 50
+// tight circle is physically alongside the excavator being filled (truck length + boom
+// reach + GPS error), and gets paired to it. This is the circle that drives the engine.
+const EXCAVATOR_FILL_RADIUS_M = 20
+// Display-only outer ring (Samarth-style "work radius") giving the operator a visual
+// sense of the bench area; the backend does nothing with this distance.
+const EXCAVATOR_WORK_AREA_M = 50
 const EXCAVATOR_CIRCLE_COLOR = '#1abc9c'
 
 // LOADING is deliberately not offered here — an excavator vehicle's own live position
@@ -68,6 +79,34 @@ function vehicleIcon(assetId: string, vehicleType: VehicleType, status: VehicleS
     iconSize: [30, 23],
     iconAnchor: [15, 11],
   })
+}
+
+function replayIcon(assetId: string, vehicleType: VehicleType): L.DivIcon {
+  const shape = VEHICLE_TYPE_SHAPES[vehicleType]
+  return L.divIcon({
+    className: 'vehicle-marker',
+    html: `
+      <div class="vehicle-marker-icon">
+        <svg viewBox="0 0 24 18" width="30" height="23" fill="${REPLAY_MARKER_COLOR}" stroke="#1a1a1a" stroke-width="0.75">${shape}</svg>
+        <span class="vehicle-marker-label">${assetId}</span>
+      </div>
+    `,
+    iconSize: [30, 23],
+    iconAnchor: [15, 11],
+  })
+}
+
+// Recenters the map on the route once per (vehicle, day) — not on every scrub step,
+// or the user's own pan/zoom while scrubbing would get fought on each slider tick.
+function FitRouteBounds({ positions }: { positions: Position[] }) {
+  const map = useMap()
+  useEffect(() => {
+    if (positions.length === 0) return
+    const bounds = L.latLngBounds(positions.map((p) => [p.latitude, p.longitude] as [number, number]))
+    map.fitBounds(bounds, { padding: [40, 40] })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positions.length > 0 ? positions[0].id : null, positions.length])
+  return null
 }
 
 const CLOSE_RING_PIXEL_THRESHOLD = 12
@@ -150,6 +189,10 @@ function ZoneEditorPanel({
   draw: DrawState
   setDraw: Dispatch<SetStateAction<DrawState>>
 }) {
+  const T = useT()
+  // Collapsed by default — the zone list/editor is an occasional admin task, not
+  // something worth permanently covering map area with (user feedback).
+  const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const [zoneType, setZoneType] = useState<ZoneType>('dumping')
   const createZone = useCreateZone()
@@ -174,10 +217,24 @@ function ZoneEditorPanel({
     updateZone.reset()
   }
 
+  if (draw.mode === 'idle' && !open) {
+    return (
+      <button className="zone-editor-toggle" onClick={() => setOpen(true)}>
+        <Hexagon size={14} />
+        {T('drawZones')}
+      </button>
+    )
+  }
+
   if (draw.mode === 'idle') {
     return (
       <div className="zone-editor-panel">
-        <button onClick={startNew}>+ New zone</button>
+        <div className="zone-editor-head">
+          <button onClick={startNew}>+ New zone</button>
+          <button className="zone-editor-close" onClick={() => setOpen(false)} aria-label="Close zones panel">
+            <X size={15} />
+          </button>
+        </div>
         <ul className="zone-editor-list">
           {zones.map((zone) => (
             <li key={zone.id}>
@@ -283,9 +340,11 @@ function ZoneEditorPanel({
 export function LiveMap({
   vehicles,
   onSelectVehicle,
+  replay,
 }: {
   vehicles: Vehicle[]
   onSelectVehicle: (vehicleId: string) => void
+  replay?: { vehicle: Vehicle; positions: Position[]; index: number } | null
 }) {
   const { data: zones } = useZones()
   const [draw, setDraw] = useState<DrawState>({ mode: 'idle' })
@@ -297,11 +356,12 @@ export function LiveMap({
 
   return (
     <div className="live-map-wrapper">
-      <MapContainer center={center} zoom={17} style={{ height: '100%', width: '100%' }}>
+      <MapContainer center={center} zoom={17} style={{ height: '100%', width: '100%' }} zoomControl={false}>
         <TileLayer
           url={ESRI_WORLD_IMAGERY}
           attribution="Tiles &copy; Esri"
         />
+        <ZoomControl position="bottomright" />
         {zones?.map((zone) => (
           <Polygon
             key={zone.id}
@@ -312,39 +372,70 @@ export function LiveMap({
             <Tooltip sticky>{zone.name} ({zone.zone_type})</Tooltip>
           </Polygon>
         ))}
-        {withPosition
-          .filter((v) => v.vehicle_type === 'excavator')
-          .map((excavator) => {
-            const pos = excavator.latest_position!
+        {!replay &&
+          withPosition
+            .filter((v) => v.vehicle_type === 'excavator')
+            .map((excavator) => {
+              const pos = excavator.latest_position!
+              return (
+                <Fragment key={`ex-radius-${excavator.id}`}>
+                  <Circle
+                    center={[pos.latitude, pos.longitude]}
+                    radius={EXCAVATOR_WORK_AREA_M}
+                    pathOptions={{
+                      color: EXCAVATOR_CIRCLE_COLOR,
+                      weight: 1.5,
+                      fillOpacity: 0.04,
+                      opacity: 0.5,
+                      dashArray: '6 4',
+                    }}
+                  >
+                    <Tooltip sticky>{excavator.asset_id} work area ({EXCAVATOR_WORK_AREA_M} m)</Tooltip>
+                  </Circle>
+                  <Circle
+                    center={[pos.latitude, pos.longitude]}
+                    radius={EXCAVATOR_FILL_RADIUS_M}
+                    pathOptions={{
+                      color: EXCAVATOR_CIRCLE_COLOR,
+                      weight: 2,
+                      fillOpacity: 0.12,
+                    }}
+                  >
+                    <Tooltip sticky>{excavator.asset_id} fill radius ({EXCAVATOR_FILL_RADIUS_M} m) — trucks inside are loading</Tooltip>
+                  </Circle>
+                </Fragment>
+              )
+            })}
+        {/* Route replay takes over the map: normal fleet markers step aside for the
+            one vehicle's breadcrumb + a scrubbable position marker (CLAUDE.md dashboard
+            spec: "breadcrumb trail, route replay with play/scrub"). */}
+        {!replay &&
+          withPosition.map((vehicle) => {
+            const pos = vehicle.latest_position!
             return (
-              <Circle
-                key={`ex-radius-${excavator.id}`}
-                center={[pos.latitude, pos.longitude]}
-                radius={EXCAVATOR_RADIUS_M}
-                pathOptions={{
-                  color: EXCAVATOR_CIRCLE_COLOR,
-                  weight: 2,
-                  fillOpacity: 0.08,
-                  dashArray: '6 4',
+              <Marker
+                key={vehicle.id}
+                position={[pos.latitude, pos.longitude]}
+                icon={vehicleIcon(vehicle.asset_id, vehicle.vehicle_type, vehicle.status)}
+                eventHandlers={{
+                  click: () => onSelectVehicle(vehicle.id),
                 }}
-              >
-                <Tooltip sticky>{excavator.asset_id} work radius ({EXCAVATOR_RADIUS_M} m)</Tooltip>
-              </Circle>
+              />
             )
           })}
-        {withPosition.map((vehicle) => {
-          const pos = vehicle.latest_position!
-          return (
-            <Marker
-              key={vehicle.id}
-              position={[pos.latitude, pos.longitude]}
-              icon={vehicleIcon(vehicle.asset_id, vehicle.vehicle_type, vehicle.status)}
-              eventHandlers={{
-                click: () => onSelectVehicle(vehicle.id),
-              }}
+        {replay && replay.positions.length > 0 && (
+          <>
+            <FitRouteBounds positions={replay.positions} />
+            <Polyline
+              positions={replay.positions.map((p) => [p.latitude, p.longitude] as [number, number])}
+              pathOptions={{ color: REPLAY_TRAIL_COLOR, weight: 3, opacity: 0.8 }}
             />
-          )
-        })}
+            <Marker
+              position={[replay.positions[replay.index].latitude, replay.positions[replay.index].longitude]}
+              icon={replayIcon(replay.vehicle.asset_id, replay.vehicle.vehicle_type)}
+            />
+          </>
+        )}
 
         {draw.mode === 'drawing' && !draw.formOpen && (
           <DrawClickCapture
@@ -375,7 +466,9 @@ export function LiveMap({
             />
           ))}
       </MapContainer>
-      <ZoneEditorPanel zones={zones ?? []} draw={draw} setDraw={setDraw} />
+      {/* Zone editing has no business on screen during a replay — it's the one other
+          floating panel and it visually collides with the replay controls. */}
+      {!replay && <ZoneEditorPanel zones={zones ?? []} draw={draw} setDraw={setDraw} />}
     </div>
   )
 }

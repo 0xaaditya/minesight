@@ -36,6 +36,7 @@ def traccar_forward(payload: TraccarForwardPayload, db: Session = Depends(get_db
         course=pos.course,
         hdop=pos.attributes.get("hdop"),
         satellites=pos.attributes.get("sat"),
+        total_distance_m=pos.attributes.get("totalDistance"),
         raw=payload.model_dump(mode="json"),
     )
     db.add(position)

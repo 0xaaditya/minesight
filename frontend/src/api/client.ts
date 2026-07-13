@@ -58,9 +58,13 @@ export interface Trip {
   loaded_at: string | null
   dumped_at: string | null
   completed_at: string | null
+  haul_distance_m: number | null // lead distance: loaded -> dumped breadcrumb path
+  trip_distance_m: number | null // full trip-row path: started -> completed
   status: TripRowStatus
   had_anomalous_entry: boolean
   cycle_time_seconds: number | null
+  load_excavator_asset_id: string | null // which excavator filled this truck
+  vehicle_asset_id: string | null // /loads view only: which truck was filled
 }
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -102,6 +106,16 @@ export function useVehiclePositions(vehicleId: string | undefined) {
   })
 }
 
+// Route replay: the full breadcrumb for one IST day. Historical once fetched — no
+// polling, unlike the live position feed above.
+export function useVehicleRoute(vehicleId: string | undefined, date: string) {
+  return useQuery({
+    queryKey: ['route', vehicleId, date],
+    queryFn: () => apiFetch<Position[]>(`/vehicles/${vehicleId}/positions?date=${date}`),
+    enabled: !!vehicleId,
+  })
+}
+
 export function useZones() {
   return useQuery({
     queryKey: ['zones'],
@@ -120,6 +134,17 @@ export function useVehicleTrips(vehicleId: string | undefined, date: string, ena
   return useQuery({
     queryKey: ['trips', vehicleId, date],
     queryFn: () => apiFetch<Trip[]>(`/vehicles/${vehicleId}/trips?date=${date}`),
+    enabled: enabled && !!vehicleId,
+    refetchInterval: 5000,
+  })
+}
+
+// Excavator-facing view of the trips table: every trip this excavator loaded. Trips
+// make no sense on an excavator card — the owner wants "how many trucks did it fill".
+export function useExcavatorLoads(vehicleId: string | undefined, date: string, enabled = true) {
+  return useQuery({
+    queryKey: ['loads', vehicleId, date],
+    queryFn: () => apiFetch<Trip[]>(`/vehicles/${vehicleId}/loads?date=${date}`),
     enabled: enabled && !!vehicleId,
     refetchInterval: 5000,
   })

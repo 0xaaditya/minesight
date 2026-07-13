@@ -51,8 +51,16 @@ LOADING_DWELL = timedelta(minutes=1)  # Amnex-style: stationary in the same zone
 # NOTE: shortened from the reference 3 minutes for field-testing convenience — revert to
 # timedelta(minutes=3) once done testing; 1 min is too quick to reliably filter out a
 # truck merely pausing briefly (e.g. at a stop sign) in production.
-EXCAVATOR_ENTER_RADIUS_M = 50.0
-EXCAVATOR_SUSTAIN_RADIUS_M = 75.0  # kept at 1.5x enter, same hysteresis ratio as before
+# Fill radius, not "work area": a truck is only credited as being filled when it's
+# practically alongside the excavator. Trucks are 7.5-10 m long and the boom reaches
+# ~7 m, so the true machine-to-machine gap during a fill is under ~15 m; 20 m adds the
+# combined GPS error of both devices (~5 m CEP each). Kept deliberately tight so that
+# (a) trucks queuing 30-50 m from the bench don't confirm LOADING while waiting, and
+# (b) when two excavators work close enough that wider circles would overlap (common
+# on one bench), attribution ambiguity only starts below ~40 m separation — and
+# nearest-wins in _determine_membership resolves what little remains.
+EXCAVATOR_ENTER_RADIUS_M = 20.0
+EXCAVATOR_SUSTAIN_RADIUS_M = 40.0  # 2x enter: tolerates the excavator walking along the face mid-load
 EXCAVATOR_LIVENESS = timedelta(minutes=2)
 NO_COMM_AFTER = timedelta(minutes=10)
 
@@ -293,6 +301,32 @@ def _confirm_loading_dwell(
     return streak_start is not None and streak_start <= window_start
 
 
+def _path_distance_m(db: Session, vehicle_id: uuid.UUID, start, end) -> Optional[float]:
+    """Distance driven between two event times. Primary source: delta of Traccar's own
+    cumulative odometer (DistanceHandler's totalDistance, carried on each position) —
+    we don't rebuild what Traccar provides (CLAUDE.md). Fallback for positions missing
+    the attribute (e.g. rows ingested before it was captured): sum haversine legs over
+    the stored breadcrumb, which slightly underestimates on sparse reporting."""
+    rows = db.execute(
+        select(Position.latitude, Position.longitude, Position.total_distance_m)
+        .where(
+            Position.vehicle_id == vehicle_id,
+            Position.event_time >= start,
+            Position.event_time <= end,
+        )
+        .order_by(Position.event_time.asc())
+    ).all()
+    if len(rows) < 2:
+        return None
+    first_odo, last_odo = rows[0][2], rows[-1][2]
+    if first_odo is not None and last_odo is not None and last_odo >= first_odo:
+        return last_odo - first_odo
+    return sum(
+        haversine_meters(rows[i - 1][0], rows[i - 1][1], rows[i][0], rows[i][1])
+        for i in range(1, len(rows))
+    )
+
+
 def _open_loading_trip(
     db: Session, vehicle: Vehicle, state: VehicleTripState, position: Position, membership: Membership
 ) -> None:
@@ -364,6 +398,12 @@ def _apply_zone_transition(
             trip.cycle_number = next_cycle
             trip.dumped_at = position.event_time
             trip.dump_zone_id = ref.id
+            # Lead distance, measured from started_at (LOADING confirm) rather than
+            # loaded_at (HAULING confirm): the truck sits stationary between the two so
+            # started_at adds ~nothing, while loaded_at systematically clips the first
+            # stretch of the haul — it only confirms once the truck is already past the
+            # sustain radius plus two reads clear of the load zone.
+            trip.haul_distance_m = _path_distance_m(db, vehicle.id, trip.started_at, position.event_time)
         else:
             # Anomalous: reached DUMPING without a valid in-progress load (e.g. skipped
             # LOADING entirely). Physical position wins — still record it — but with no
@@ -390,17 +430,53 @@ def _apply_zone_transition(
             if trip is not None:
                 trip.completed_at = position.event_time
                 trip.status = TripRowStatus.COMPLETED
+                trip.trip_distance_m = _path_distance_m(
+                    db, vehicle.id, trip.started_at, position.event_time
+                )
         state.trip_status = TripCycleStatus.RETURNING
         state.trip_status_since = position.event_time
         state.current_trip_id = None
 
 
+def excavator_is_paired(db: Session, excavator_id: uuid.UUID, now) -> bool:
+    """Whether a truck is currently active inside this excavator's loading circle. An
+    excavator swings/digs but barely translates, so its own GPS speed reads ~0 whether
+    it's mid-cycle loading trucks or genuinely idle — speed can't tell those apart the
+    way it can for a truck. Truck-pairing (already computed for the dynamic excavator
+    zone, see _determine_membership) is the only signal available today, pending real
+    ignition sensing (CLAUDE.md hardware table lists this as a later firmware milestone).
+
+    Gated to a recent last_processed_event_time: paired_excavator_id is only ever
+    cleared by the PAIRED TRUCK's next tick, so a truck that goes no-comm mid-pairing
+    would otherwise freeze this excavator as "Running" forever.
+    """
+    cutoff = now - EXCAVATOR_LIVENESS
+    return (
+        db.scalar(
+            select(VehicleTripState.vehicle_id)
+            .where(
+                VehicleTripState.paired_excavator_id == excavator_id,
+                VehicleTripState.last_processed_event_time >= cutoff,
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
 def compute_vehicle_status(
-    latest_position: Optional[Position], trip_state: Optional[VehicleTripState], now
+    latest_position: Optional[Position],
+    trip_state: Optional[VehicleTripState],
+    now,
+    is_paired_excavator: bool = False,
 ) -> VehicleStatus:
     """The Samarth-style 5-state taxonomy — derived, never independently detected, so it
     can never contradict this engine's own BREAKDOWN determination. Priority order:
-    Not-installed -> No-comm -> Breakdown -> Running -> Idle."""
+    Not-installed -> No-comm -> Breakdown -> Running -> Idle.
+
+    is_paired_excavator (see excavator_is_paired): the fallback "is it working" signal
+    for excavators, which speed alone can't answer.
+    """
     if latest_position is None:
         return VehicleStatus.NOT_INSTALLED
     if (now - latest_position.received_at) > NO_COMM_AFTER:
@@ -408,5 +484,7 @@ def compute_vehicle_status(
     if trip_state is not None and trip_state.trip_status == TripCycleStatus.BREAKDOWN:
         return VehicleStatus.BREAKDOWN
     if latest_position.speed_knots is not None and latest_position.speed_knots > STATIONARY_KNOTS_THRESHOLD:
+        return VehicleStatus.RUNNING
+    if is_paired_excavator:
         return VehicleStatus.RUNNING
     return VehicleStatus.IDLE
