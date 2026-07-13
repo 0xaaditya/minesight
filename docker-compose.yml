@@ -32,6 +32,11 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg://minesight:minesight@postgres:5432/minesight
+      # Device auto-registration. Credentials come from .env (never committed);
+      # leave unset and the backend just skips Traccar device creation.
+      TRACCAR_API_URL: http://traccar:8082/api
+      TRACCAR_API_USER: ${TRACCAR_API_USER:-}
+      TRACCAR_API_PASSWORD: ${TRACCAR_API_PASSWORD:-}
     ports:
       - "8000:8000"
     depends_on:

@@ -6,6 +6,7 @@ import { LiveMap } from '../components/LiveMap'
 import { ReplayPanel } from '../components/ReplayPanel'
 import type { ReplayRequest } from '../layout/Shell'
 import { ACTIVE_TRIP_PHASES, STATUS_META, TRIP_META } from '../lib/status'
+import { minutesSince } from '../lib/format'
 import { TYPE_ICON } from '../lib/vehicleIcons'
 import { useT } from '../i18n/strings'
 
@@ -17,10 +18,6 @@ type OutletCtx = {
   setReplay: (replay: ReplayRequest | null) => void
 }
 type Filter = 'all' | VehicleStatus
-
-function minutesSince(iso: string): number {
-  return Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000))
-}
 
 export function MapPage() {
   const { data: vehicles, isLoading, error } = useVehicles()

@@ -41,6 +41,9 @@ export const ZONE_META: Record<ZoneType, { color: string; label: string }> = {
   dumping: { color: '#F59E0B', label: 'Dumping' },
   parking: { color: '#94A3B8', label: 'Parking' },
   no_go: { color: '#DC2626', label: 'No-Go' },
+  // Sky — deliberately outside both the zone and status palettes so the site perimeter
+  // never reads as an operational state on satellite imagery.
+  mine_boundary: { color: '#38BDF8', label: 'Mine Boundary' },
 }
 
 export const VEHICLE_TYPE_LABEL: Record<VehicleType, string> = {

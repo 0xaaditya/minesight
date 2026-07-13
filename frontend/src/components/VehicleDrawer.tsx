@@ -2,40 +2,16 @@ import { Activity, AlertTriangle, Camera, Clock, Fuel as FuelIcon, Gauge, Histor
 import type { Trip, Vehicle } from '../api/client'
 import { todayIST, useExcavatorLoads, useVehicleTrips } from '../api/client'
 import { ACTIVE_TRIP_PHASES, statusMeta, TRIP_META, VEHICLE_TYPE_LABEL } from '../lib/status'
+import {
+  STALE_THRESHOLD_MIN,
+  formatCycleTime,
+  formatDistance,
+  formatIST,
+  formatLastSeen,
+  minutesSince,
+} from '../lib/format'
 import { TYPE_ICON } from '../lib/vehicleIcons'
 import { useT } from '../i18n/strings'
-
-// fixMin-equivalent: minutes since the vehicle's last known fix.
-function minutesSince(iso: string): number {
-  return Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000))
-}
-
-function formatLastSeen(minutes: number): string {
-  if (minutes < 1) return 'just now'
-  if (minutes < 60) return `${minutes} min ago`
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m ago`
-}
-
-const STALE_THRESHOLD_MIN = 10 // matches CLAUDE.md no-comm threshold
-
-// All times stored UTC, displayed IST (CLAUDE.md convention).
-function formatIST(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-IN', {
-    timeZone: 'Asia/Kolkata',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  })
-}
-
-function formatDistance(meters: number): string {
-  return meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`
-}
-
-function formatCycleTime(seconds: number): string {
-  const min = Math.round(seconds / 60)
-  return min < 60 ? `${min} min` : `${Math.floor(min / 60)}h ${min % 60}m`
-}
 
 function TripRow({ trip }: { trip: Trip }) {
   const T = useT()

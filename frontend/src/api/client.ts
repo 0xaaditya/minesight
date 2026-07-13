@@ -10,7 +10,9 @@ export type VehicleStatus = 'running' | 'idle' | 'breakdown' | 'no_comm' | 'not_
 // Haul-cycle state machine status; only meaningful for tipper/loader vehicle types.
 export type TripCycleStatus = 'idle' | 'loading' | 'hauling' | 'dumping' | 'returning' | 'breakdown'
 
-export type ZoneType = 'loading' | 'dumping' | 'parking' | 'no_go'
+// mine_boundary is the whole-site perimeter — display/reporting only; the backend trip
+// engine excludes it so it can't suppress breakdown detection (see trip_engine._active_zones).
+export type ZoneType = 'loading' | 'dumping' | 'parking' | 'no_go' | 'mine_boundary'
 
 export type TripRowStatus = 'in_progress' | 'completed' | 'aborted'
 
@@ -31,10 +33,25 @@ export interface Vehicle {
   asset_id: string
   vehicle_type: VehicleType
   traccar_unique_id: string
+  registration_number: string | null
+  manufacturer: string | null
+  capacity_tonnes: number | null
   created_at: string
   latest_position: Position | null
   status: VehicleStatus | null
   trip_status: TripCycleStatus | null
+  // POST /vehicles response only: outcome of auto-registering the device in Traccar.
+  traccar_status: 'created' | 'exists' | 'failed' | 'skipped' | null
+  traccar_detail: string | null
+}
+
+export interface VehicleCreatePayload {
+  asset_id: string
+  vehicle_type?: VehicleType
+  traccar_unique_id?: string
+  registration_number?: string
+  manufacturer?: string
+  capacity_tonnes?: number
 }
 
 export interface Zone {
@@ -91,9 +108,20 @@ export function useVehicles() {
 export function useCreateVehicle() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (payload: { asset_id: string; vehicle_type?: VehicleType }) =>
+    mutationFn: (payload: VehicleCreatePayload) =>
       apiFetch<Vehicle>('/vehicles', { method: 'POST', body: JSON.stringify(payload) }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['vehicles'] }),
+  })
+}
+
+// Single-vehicle read for the deep-linkable detail page — the /vehicles list poll
+// doesn't help someone landing directly on /vehicles/:id.
+export function useVehicle(vehicleId: string | undefined) {
+  return useQuery({
+    queryKey: ['vehicle', vehicleId],
+    queryFn: () => apiFetch<Vehicle>(`/vehicles/${vehicleId}`),
+    enabled: !!vehicleId,
+    refetchInterval: 5000,
   })
 }
 
@@ -147,6 +175,49 @@ export function useExcavatorLoads(vehicleId: string | undefined, date: string, e
     queryFn: () => apiFetch<Trip[]>(`/vehicles/${vehicleId}/loads?date=${date}`),
     enabled: enabled && !!vehicleId,
     refetchInterval: 5000,
+  })
+}
+
+// Detail-page period filters: inclusive IST day range, or omit both for all-time.
+function rangeQuery(start?: string, end?: string): string {
+  return start && end ? `?start_date=${start}&end_date=${end}` : ''
+}
+
+export function useVehicleTripsRange(
+  vehicleId: string | undefined,
+  start: string | undefined,
+  end: string | undefined,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ['trips-range', vehicleId, start ?? 'all', end ?? 'all'],
+    queryFn: () => apiFetch<Trip[]>(`/vehicles/${vehicleId}/trips${rangeQuery(start, end)}`),
+    enabled: enabled && !!vehicleId,
+    refetchInterval: 5000,
+  })
+}
+
+export function useExcavatorLoadsRange(
+  vehicleId: string | undefined,
+  start: string | undefined,
+  end: string | undefined,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ['loads-range', vehicleId, start ?? 'all', end ?? 'all'],
+    queryFn: () => apiFetch<Trip[]>(`/vehicles/${vehicleId}/loads${rangeQuery(start, end)}`),
+    enabled: enabled && !!vehicleId,
+    refetchInterval: 5000,
+  })
+}
+
+// One trip's breadcrumb: bounded on both ends so it doesn't drag in the rest of the
+// day. Historical once fetched — no polling.
+export function useTripRoute(vehicleId: string | undefined, sinceIso: string | undefined, untilIso: string | undefined) {
+  return useQuery({
+    queryKey: ['trip-route', vehicleId, sinceIso, untilIso],
+    queryFn: () => apiFetch<Position[]>(`/vehicles/${vehicleId}/positions?since=${sinceIso}&until=${untilIso}`),
+    enabled: !!vehicleId && !!sinceIso && !!untilIso,
   })
 }
 

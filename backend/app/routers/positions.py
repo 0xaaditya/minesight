@@ -18,12 +18,15 @@ router = APIRouter(prefix="/vehicles", tags=["positions"])
 def list_positions(
     vehicle_id: uuid.UUID,
     since: Optional[datetime] = Query(default=None),
+    until: Optional[datetime] = Query(default=None),
     date_: Optional[date] = Query(default=None, alias="date"),
     db: Session = Depends(get_db),
 ):
-    """`date` (IST day, for route replay) takes precedence over `since` — same one-or-
-    the-other convention as /trips. Positions never delete inside the 90-day retention
-    window (CLAUDE.md), so an old date always has a full breadcrumb to replay."""
+    """`date` (IST day, for route replay) takes precedence over `since`/`until` — same
+    one-or-the-other convention as /trips. `until` bounds a `since` query so a single
+    trip's breadcrumb (started_at → completed_at) can be fetched without pulling the
+    rest of the day. Positions never delete inside the 90-day retention window
+    (CLAUDE.md), so an old date always has a full breadcrumb to replay."""
     if not db.get(Vehicle, vehicle_id):
         raise HTTPException(status_code=404, detail="vehicle not found")
 
@@ -31,8 +34,11 @@ def list_positions(
     if date_ is not None:
         start, end = ist_day_bounds(date_)
         stmt = stmt.where(Position.event_time >= start, Position.event_time < end)
-    elif since is not None:
-        stmt = stmt.where(Position.event_time >= since)
+    else:
+        if since is not None:
+            stmt = stmt.where(Position.event_time >= since)
+        if until is not None:
+            stmt = stmt.where(Position.event_time <= until)
     stmt = stmt.order_by(Position.event_time.asc())
     return db.scalars(stmt).all()
 

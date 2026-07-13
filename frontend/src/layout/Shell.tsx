@@ -89,6 +89,23 @@ const LANGS: { code: Lang; label: string }[] = [
   { code: 'mr', label: 'मरा' },
 ]
 
+// Below this the sidebar switches from an inline column (240/64px) to an off-canvas
+// overlay — keep in sync with the 720px breakpoint in index.css's responsive section.
+const MOBILE_BREAKPOINT_PX = 720
+
+function useIsMobile(): boolean {
+  const [isMobile, setIsMobile] = useState(
+    () => window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX}px)`).matches,
+  )
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX}px)`)
+    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  return isMobile
+}
+
 function useISTClock() {
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
@@ -108,6 +125,10 @@ function useISTClock() {
 
 export function Shell() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  // Mobile nav is separate state from desktop collapse: the overlay defaults closed
+  // and every navigation closes it, while desktop expanded/collapsed persists.
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const isMobile = useIsMobile()
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null)
   const [replay, setReplay] = useState<ReplayRequest | null>(null)
   const { lang, setLang } = useLang()
@@ -117,7 +138,10 @@ export function Shell() {
   const navigate = useNavigate()
   const { data: vehicles } = useVehicles()
 
-  const breadcrumbKey = BREADCRUMB[location.pathname] ?? 'home'
+  // Prefix match covers nested routes like /vehicles/:id (exact-key lookup would
+  // silently fall back to "home" there).
+  const breadcrumbKey =
+    BREADCRUMB[location.pathname] ?? (location.pathname.startsWith('/vehicles') ? 'vehiclesDevices' : 'home')
   const selectedVehicle = vehicles?.find((v) => v.id === selectedVehicleId) ?? null
 
   // Replay only makes sense on the map — jump there and close the drawer so the
@@ -128,12 +152,22 @@ export function Shell() {
     navigate('/map')
   }
 
+  // In the mobile overlay the rail always shows full labels — the desktop 64px
+  // icon-rail collapse is meaningless off-canvas.
+  const labelsVisible = isMobile || sidebarOpen
+  const sidebarClass = isMobile
+    ? `ls-sidebar${mobileNavOpen ? ' ls-sidebar-mobile-open' : ''}`
+    : `ls-sidebar${sidebarOpen ? '' : ' ls-sidebar-collapsed'}`
+
   return (
     <div className="ls-shell">
-      <aside className={`ls-sidebar${sidebarOpen ? '' : ' ls-sidebar-collapsed'}`}>
+      {isMobile && mobileNavOpen && (
+        <div className="ls-sidebar-backdrop" onClick={() => setMobileNavOpen(false)} />
+      )}
+      <aside className={sidebarClass}>
         <div className="ls-sidebar-brand">
           <div className="ls-logo">L</div>
-          {sidebarOpen && (
+          {labelsVisible && (
             <div className="ls-brand-text">
               <div className="ls-brand-name">Lodestar</div>
               <div className="ls-brand-sub">Fleet & Anti-theft</div>
@@ -143,7 +177,7 @@ export function Shell() {
         <nav className="ls-nav">
           {NAV_GROUPS.map((group) => (
             <div className="ls-nav-group" key={group.label}>
-              {sidebarOpen && <div className="ls-nav-group-label">{group.label}</div>}
+              {labelsVisible && <div className="ls-nav-group-label">{group.label}</div>}
               {group.items.map((item) => {
                 const Icon = item.icon
                 const label = item.labelKey ? T(item.labelKey) : item.label!
@@ -151,7 +185,7 @@ export function Shell() {
                   return (
                     <div className="ls-nav-item ls-nav-item-disabled" key={label} title={label}>
                       <Icon size={18} />
-                      {sidebarOpen && <span>{label}</span>}
+                      {labelsVisible && <span>{label}</span>}
                     </div>
                   )
                 }
@@ -162,9 +196,10 @@ export function Shell() {
                     key={label}
                     title={label}
                     className={({ isActive }) => `ls-nav-item${isActive ? ' ls-nav-item-active' : ''}`}
+                    onClick={() => setMobileNavOpen(false)}
                   >
                     <Icon size={18} />
-                    {sidebarOpen && <span>{label}</span>}
+                    {labelsVisible && <span>{label}</span>}
                   </NavLink>
                 )
               })}
@@ -173,13 +208,17 @@ export function Shell() {
         </nav>
         <div className="ls-sidebar-footer">
           <span className="ls-status-dot" />
-          {sidebarOpen && <span>{T('poweredBy')} · v0.9.2</span>}
+          {labelsVisible && <span>{T('poweredBy')} · v0.9.2</span>}
         </div>
       </aside>
 
       <div className="ls-main">
         <header className="ls-header">
-          <button className="ls-icon-btn" onClick={() => setSidebarOpen((v) => !v)} aria-label="Toggle sidebar">
+          <button
+            className="ls-icon-btn"
+            onClick={() => (isMobile ? setMobileNavOpen((v) => !v) : setSidebarOpen((v) => !v))}
+            aria-label="Toggle sidebar"
+          >
             <PanelLeft size={17} />
           </button>
           <div className="ls-breadcrumb">

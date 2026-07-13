@@ -53,6 +53,10 @@ class ZoneType(str, enum.Enum):
     DUMPING = "dumping"
     PARKING = "parking"
     NO_GO = "no_go"
+    # Whole-site perimeter. Display/reporting only — trip_engine._active_zones excludes
+    # it, because a polygon containing the entire site would make every vehicle count as
+    # "inside a zone" and silently disable breakdown detection fleet-wide.
+    MINE_BOUNDARY = "mine_boundary"
 
 
 class ZoneAuditAction(str, enum.Enum):
@@ -111,6 +115,12 @@ class Vehicle(Base):
     # Matches Traccar's `id=` unique identifier. Same as asset_id today (our own ESP32 nodes),
     # kept as a separate column since production Teltonika devices may use a different one.
     traccar_unique_id: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    # Manual registry fields; schema-ready for a future VAHAN RC-lookup API that would
+    # auto-fill them from the plate. Manufacturer also drives device install config later
+    # (e.g. Volvo trucks carry factory weigh sensors).
+    registration_number: Mapped[str] = mapped_column(String, nullable=True)
+    manufacturer: Mapped[str] = mapped_column(String, nullable=True)
+    capacity_tonnes: Mapped[float] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     organization: Mapped["Organization"] = relationship(back_populates="vehicles")

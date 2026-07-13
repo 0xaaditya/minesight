@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Trip, Vehicle
 from app.schemas import TripOut
-from app.time_utils import ist_day_bounds
+from app.time_utils import ist_day_bounds, ist_range_bounds
 
 router = APIRouter(prefix="/vehicles", tags=["trips"])
 
@@ -21,19 +21,32 @@ def _asset_id_map(db: Session, vehicle_ids: set[uuid.UUID]) -> dict[uuid.UUID, s
     return {vid: asset_id for vid, asset_id in rows}
 
 
+def _apply_started_at_filter(stmt, date_, start_date, end_date):
+    """One IST day (`date`, takes precedence — the drawer's existing contract) or an
+    inclusive IST day range (`start_date`/`end_date`, for the detail page's day/week
+    filters). No params = all time."""
+    if date_ is not None:
+        start, end = ist_day_bounds(date_)
+        return stmt.where(Trip.started_at >= start, Trip.started_at < end)
+    if start_date is not None and end_date is not None:
+        start, end = ist_range_bounds(start_date, end_date)
+        return stmt.where(Trip.started_at >= start, Trip.started_at < end)
+    return stmt
+
+
 @router.get("/{vehicle_id}/trips", response_model=list[TripOut])
 def list_trips(
     vehicle_id: uuid.UUID,
     date_: Optional[date] = Query(default=None, alias="date"),
+    start_date: Optional[date] = Query(default=None),
+    end_date: Optional[date] = Query(default=None),
     db: Session = Depends(get_db),
 ):
     if not db.get(Vehicle, vehicle_id):
         raise HTTPException(status_code=404, detail="vehicle not found")
 
     stmt = select(Trip).where(Trip.vehicle_id == vehicle_id)
-    if date_ is not None:
-        start, end = ist_day_bounds(date_)
-        stmt = stmt.where(Trip.started_at >= start, Trip.started_at < end)
+    stmt = _apply_started_at_filter(stmt, date_, start_date, end_date)
     stmt = stmt.order_by(Trip.started_at.asc())
     trips = db.scalars(stmt).all()
 
@@ -53,6 +66,8 @@ def list_trips(
 def list_loads(
     vehicle_id: uuid.UUID,
     date_: Optional[date] = Query(default=None, alias="date"),
+    start_date: Optional[date] = Query(default=None),
+    end_date: Optional[date] = Query(default=None),
     db: Session = Depends(get_db),
 ):
     """The excavator-facing view of the same trips table: every trip THIS vehicle loaded
@@ -63,9 +78,7 @@ def list_loads(
         raise HTTPException(status_code=404, detail="vehicle not found")
 
     stmt = select(Trip).where(Trip.load_excavator_vehicle_id == vehicle_id)
-    if date_ is not None:
-        start, end = ist_day_bounds(date_)
-        stmt = stmt.where(Trip.started_at >= start, Trip.started_at < end)
+    stmt = _apply_started_at_filter(stmt, date_, start_date, end_date)
     stmt = stmt.order_by(Trip.started_at.asc())
     trips = db.scalars(stmt).all()
 

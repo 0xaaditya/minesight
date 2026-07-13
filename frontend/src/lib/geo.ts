@@ -17,5 +17,8 @@ export function pointInPolygon(lat: number, lon: number, zone: Zone): boolean {
 }
 
 export function isInsideAnyZone(lat: number, lon: number, zones: Zone[]): boolean {
-  return zones.some((zone) => pointInPolygon(lat, lon, zone))
+  // The mine boundary contains the whole site by definition — counting it would make
+  // every vehicle "inside a zone" and turn the in/out-of-zone card into a constant.
+  // Mirrors the same exclusion in backend trip_engine._active_zones.
+  return zones.some((zone) => zone.zone_type !== 'mine_boundary' && pointInPolygon(lat, lon, zone))
 }

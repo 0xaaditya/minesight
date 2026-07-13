@@ -16,16 +16,11 @@ import { Hexagon, X } from 'lucide-react'
 import type { Position, Vehicle, VehicleStatus, VehicleType, Zone, ZoneType } from '../api/client'
 import { useCreateZone, useDeleteZone, useUpdateZone, useZones } from '../api/client'
 import { statusMeta, ZONE_META } from '../lib/status'
+import { DEFAULT_CENTER, ESRI_ATTRIBUTION, ESRI_WORLD_IMAGERY } from '../lib/map'
 import { useT } from '../i18n/strings'
 
 const REPLAY_TRAIL_COLOR = '#2563EB'
 const REPLAY_MARKER_COLOR = '#2563EB'
-
-// No Google Maps API per CLAUDE.md — Esri World Imagery (free) is the locked choice.
-const ESRI_WORLD_IMAGERY =
-  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
-
-const DEFAULT_CENTER: [number, number] = [18.6129, 73.7433] // falls back near the field-test site
 
 // Mirrors EXCAVATOR_ENTER_RADIUS_M in backend/app/trip_engine.py — a truck inside this
 // tight circle is physically alongside the excavator being filled (truck length + boom
@@ -45,7 +40,17 @@ const ZONE_TYPE_OPTIONS: { value: ZoneType; label: string }[] = [
   { value: 'dumping', label: 'Dumping' },
   { value: 'parking', label: 'Parking' },
   { value: 'no_go', label: 'No-Go' },
+  { value: 'mine_boundary', label: 'Mine Boundary' },
 ]
+
+// The site perimeter is context, not an operational zone: dashed outline, zero fill,
+// so it never tints the whole map or competes with dumping/parking polygons inside it.
+function zonePathOptions(zone: Zone) {
+  const color = ZONE_META[zone.zone_type].color
+  return zone.zone_type === 'mine_boundary'
+    ? { color, weight: 2.5, dashArray: '8 6', fillOpacity: 0 }
+    : { color, weight: 2, fillOpacity: 0.1 }
+}
 
 // Simple silhouettes distinguishing equipment shape (Samarth-style), 24x18 viewBox.
 // Not a literal render of each machine — just enough shape difference (arm+bucket vs
@@ -176,9 +181,45 @@ function toGeoJSONPolygon(points: [number, number][]): Zone['geometry'] {
   return { type: 'Polygon', coordinates: [ring] }
 }
 
+// Tolerant of "lat, lng" / "lat lng" / "lat; lng" per line — what pasting from Google
+// Maps, a GPS app, or a spreadsheet column pair actually produces. Blank lines ignored.
+function parseCoordLines(text: string): { points: [number, number][]; errors: string[] } {
+  const points: [number, number][] = []
+  const errors: string[] = []
+  text.split('\n').forEach((line, i) => {
+    const trimmed = line.trim()
+    if (!trimmed) return
+    const parts = trimmed.split(/[,;\s]+/).filter(Boolean)
+    const lat = Number(parts[0])
+    const lng = Number(parts[1])
+    if (parts.length !== 2 || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+      errors.push(`Line ${i + 1}: expected "lat, lng"`)
+    } else if (Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+      errors.push(`Line ${i + 1}: lat must be within ±90, lng within ±180`)
+    } else {
+      points.push([lat, lng])
+    }
+  })
+  return { points, errors }
+}
+
+function pointsToCoordText(points: [number, number][]): string {
+  return points.map(([lat, lng]) => `${lat.toFixed(6)}, ${lng.toFixed(6)}`).join('\n')
+}
+
+// entryMode: 'map' = click-to-place (the original flow); 'manual' = typed/pasted
+// lat,lng lines with the textarea as the source of truth (map clicking and vertex
+// dragging are disabled so the two inputs can't fight over the same points array).
 type DrawState =
   | { mode: 'idle' }
-  | { mode: 'drawing'; editingZone: Zone | null; points: [number, number][]; formOpen: boolean }
+  | {
+      mode: 'drawing'
+      editingZone: Zone | null
+      points: [number, number][]
+      formOpen: boolean
+      entryMode: 'map' | 'manual'
+      coordText: string
+    }
 
 function ZoneEditorPanel({
   zones,
@@ -200,13 +241,13 @@ function ZoneEditorPanel({
   const deleteZone = useDeleteZone()
 
   const startNew = () => {
-    setDraw({ mode: 'drawing', editingZone: null, points: [], formOpen: false })
+    setDraw({ mode: 'drawing', editingZone: null, points: [], formOpen: false, entryMode: 'map', coordText: '' })
     setName('')
     setZoneType('dumping')
   }
 
   const startRedraw = (zone: Zone) => {
-    setDraw({ mode: 'drawing', editingZone: zone, points: [], formOpen: false })
+    setDraw({ mode: 'drawing', editingZone: zone, points: [], formOpen: false, entryMode: 'map', coordText: '' })
     setName(zone.name)
     setZoneType(zone.zone_type)
   }
@@ -262,9 +303,17 @@ function ZoneEditorPanel({
     )
   }
 
-  const { editingZone, points, formOpen } = draw
+  const { editingZone, points, formOpen, entryMode, coordText } = draw
   const isSaving = createZone.isPending || updateZone.isPending
   const saveError = (createZone.error as Error | null)?.message ?? (updateZone.error as Error | null)?.message
+  const coordErrors = entryMode === 'manual' ? parseCoordLines(coordText).errors : []
+
+  const switchEntryMode = (next: 'map' | 'manual') => {
+    if (next === entryMode) return
+    // Carry the shape across: clicked points serialize into the textarea, typed text
+    // has already been parsed into points on every keystroke.
+    setDraw({ ...draw, entryMode: next, coordText: next === 'manual' ? pointsToCoordText(points) : coordText })
+  }
 
   const submit = () => {
     const geometry = toGeoJSONPolygon(points)
@@ -280,21 +329,64 @@ function ZoneEditorPanel({
     <div className="zone-editor-panel">
       {!formOpen ? (
         <>
-          <p>
-            {editingZone ? `Redrawing "${editingZone.name}"` : 'New zone'} — click the map to place points (
-            {points.length} placed, need ≥3). Drag a point to nudge it, or click back on the red first point
-            to close the shape.
-          </p>
-          <div className="zone-editor-actions">
+          <div className="zone-editor-tabs">
             <button
-              onClick={() => setDraw({ ...draw, points: points.slice(0, -1) })}
-              disabled={points.length === 0}
+              className={entryMode === 'map' ? 'zone-editor-tab-active' : ''}
+              onClick={() => switchEntryMode('map')}
             >
-              Undo point
+              {T('drawOnMap')}
             </button>
             <button
+              className={entryMode === 'manual' ? 'zone-editor-tab-active' : ''}
+              onClick={() => switchEntryMode('manual')}
+            >
+              {T('enterCoordinates')}
+            </button>
+          </div>
+          {entryMode === 'map' ? (
+            <p>
+              {editingZone ? `Redrawing "${editingZone.name}"` : 'New zone'} — click the map to place points (
+              {points.length} placed, need ≥3). Drag a point to nudge it, or click back on the red first point
+              to close the shape.
+            </p>
+          ) : (
+            <>
+              <p>{T('coordHelp')}</p>
+              <textarea
+                className="zone-coord-input"
+                value={coordText}
+                rows={6}
+                placeholder={'18.612900, 73.743300\n18.613400, 73.744100\n18.612500, 73.744600'}
+                onChange={(e) =>
+                  setDraw({ ...draw, coordText: e.target.value, points: parseCoordLines(e.target.value).points })
+                }
+                autoFocus
+              />
+              <p className="zone-coord-status">
+                {points.length} point{points.length === 1 ? '' : 's'} (need ≥3)
+              </p>
+              {coordErrors.length > 0 && (
+                <ul className="zone-coord-errors">
+                  {coordErrors.slice(0, 3).map((err) => (
+                    <li key={err}>{err}</li>
+                  ))}
+                  {coordErrors.length > 3 && <li>…and {coordErrors.length - 3} more</li>}
+                </ul>
+              )}
+            </>
+          )}
+          <div className="zone-editor-actions">
+            {entryMode === 'map' && (
+              <button
+                onClick={() => setDraw({ ...draw, points: points.slice(0, -1) })}
+                disabled={points.length === 0}
+              >
+                Undo point
+              </button>
+            )}
+            <button
               onClick={() => setDraw({ ...draw, formOpen: true })}
-              disabled={points.length < 3}
+              disabled={points.length < 3 || coordErrors.length > 0}
             >
               Finish
             </button>
@@ -359,7 +451,7 @@ export function LiveMap({
       <MapContainer center={center} zoom={17} style={{ height: '100%', width: '100%' }} zoomControl={false}>
         <TileLayer
           url={ESRI_WORLD_IMAGERY}
-          attribution="Tiles &copy; Esri"
+          attribution={ESRI_ATTRIBUTION}
         />
         <ZoomControl position="bottomright" />
         {zones?.map((zone) => (
@@ -367,7 +459,7 @@ export function LiveMap({
             key={zone.id}
             // GeoJSON is [lon, lat]; Leaflet wants [lat, lon].
             positions={zone.geometry.coordinates[0].map(([lon, lat]) => [lat, lon] as [number, number])}
-            pathOptions={{ color: ZONE_META[zone.zone_type].color, weight: 2, fillOpacity: 0.1 }}
+            pathOptions={zonePathOptions(zone)}
           >
             <Tooltip sticky>{zone.name} ({zone.zone_type})</Tooltip>
           </Polygon>
@@ -437,7 +529,7 @@ export function LiveMap({
           </>
         )}
 
-        {draw.mode === 'drawing' && !draw.formOpen && (
+        {draw.mode === 'drawing' && !draw.formOpen && draw.entryMode === 'map' && (
           <DrawClickCapture
             points={draw.points}
             onPoint={(pt) => setDraw({ ...draw, points: [...draw.points, pt] })}
@@ -450,7 +542,10 @@ export function LiveMap({
             pathOptions={{ color: '#ffffff', weight: 2, dashArray: '4 4', fillOpacity: 0.15 }}
           />
         )}
+        {/* Vertex handles only in map mode — in manual mode the textarea is the source
+            of truth and dragging a marker would silently diverge from it. */}
         {draw.mode === 'drawing' &&
+          draw.entryMode === 'map' &&
           draw.points.map((pt, i) => (
             <DraggableVertex
               key={i}

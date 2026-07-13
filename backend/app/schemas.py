@@ -19,6 +19,10 @@ class VehicleCreate(BaseModel):
     asset_id: str
     vehicle_type: Optional[VehicleType] = None  # derived from asset_id prefix if omitted
     traccar_unique_id: Optional[str] = None  # defaults to asset_id if omitted
+    # Manual for now; a future VAHAN RC-lookup API would auto-fill these from the plate.
+    registration_number: Optional[str] = None
+    manufacturer: Optional[str] = None
+    capacity_tonnes: Optional[float] = None
 
 
 class PositionOut(BaseModel):
@@ -42,10 +46,18 @@ class VehicleOut(BaseModel):
     asset_id: str
     vehicle_type: VehicleType
     traccar_unique_id: str
+    registration_number: Optional[str] = None
+    manufacturer: Optional[str] = None
+    capacity_tonnes: Optional[float] = None
     created_at: datetime
     latest_position: Optional[PositionOut] = None
     status: Optional[VehicleStatus] = None  # derived (see trip_engine.compute_vehicle_status)
     trip_status: Optional[TripCycleStatus] = None  # haul-cycle vehicle types only
+    # Set only on the POST /vehicles response (router-resolved, not ORM — same pattern as
+    # TripOut.load_excavator_asset_id): outcome of the side-registration of the device in
+    # Traccar, so the UI can warn without failing the vehicle creation itself.
+    traccar_status: Optional[str] = None  # created | exists | failed | skipped
+    traccar_detail: Optional[str] = None
 
 
 def derive_vehicle_type(asset_id: str) -> Optional[VehicleType]:

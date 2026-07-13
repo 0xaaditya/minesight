@@ -1,10 +1,11 @@
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import trip_engine
+from app import traccar_client, trip_engine
 from app.database import get_db
 from app.models import Organization, Position, Vehicle, VehicleTripState, VehicleType
 from app.schemas import PositionOut, VehicleCreate, VehicleOut, derive_vehicle_type
@@ -29,22 +30,51 @@ def create_vehicle(payload: VehicleCreate, db: Session = Depends(get_db)):
     if db.scalar(select(Vehicle).where(Vehicle.asset_id == payload.asset_id)):
         raise HTTPException(status_code=409, detail=f"asset_id {payload.asset_id} already registered")
 
+    traccar_unique_id = payload.traccar_unique_id or payload.asset_id
+    if db.scalar(select(Vehicle).where(Vehicle.traccar_unique_id == traccar_unique_id)):
+        raise HTTPException(
+            status_code=409,
+            detail=f"device ID {traccar_unique_id} is already linked to another vehicle",
+        )
+
     vehicle = Vehicle(
         org_id=org.id,
         asset_id=payload.asset_id,
         vehicle_type=vehicle_type,
-        traccar_unique_id=payload.traccar_unique_id or payload.asset_id,
+        traccar_unique_id=traccar_unique_id,
+        registration_number=payload.registration_number,
+        manufacturer=payload.manufacturer,
+        capacity_tonnes=payload.capacity_tonnes,
     )
     db.add(vehicle)
     db.commit()
     db.refresh(vehicle)
-    return _with_latest_position(vehicle, db)
+
+    # After commit on purpose: our registry is authoritative, and Traccar being down
+    # must never block fleet onboarding (the webhook simply won't match this device
+    # until it exists in Traccar). Outcome is reported, not raised.
+    traccar_status, traccar_detail = traccar_client.create_device(
+        name=vehicle.asset_id, unique_id=vehicle.traccar_unique_id
+    )
+    out = _with_latest_position(vehicle, db)
+    out.traccar_status = traccar_status
+    out.traccar_detail = traccar_detail
+    return out
 
 
 @router.get("", response_model=list[VehicleOut])
 def list_vehicles(db: Session = Depends(get_db)):
     vehicles = db.scalars(select(Vehicle)).all()
     return [_with_latest_position(v, db) for v in vehicles]
+
+
+@router.get("/{vehicle_id}", response_model=VehicleOut)
+def get_vehicle(vehicle_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Single-vehicle read for the deep-linkable detail page (/vehicles/:id)."""
+    vehicle = db.get(Vehicle, vehicle_id)
+    if vehicle is None:
+        raise HTTPException(status_code=404, detail="vehicle not found")
+    return _with_latest_position(vehicle, db)
 
 
 def _with_latest_position(vehicle: Vehicle, db: Session) -> VehicleOut:

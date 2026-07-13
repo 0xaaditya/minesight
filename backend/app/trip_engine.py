@@ -176,9 +176,17 @@ def _maybe_resume_from_breakdown(state: VehicleTripState, position: Position) ->
 
 
 def _active_zones(db: Session, org_id: uuid.UUID) -> list[Zone]:
+    # MINE_BOUNDARY is excluded here — the single choke point where zones enter the
+    # engine. A site perimeter contains every vehicle by definition, so letting it into
+    # membership would make is_inside_any_zone always true and silently disable the
+    # breakdown detection above (stationary >15 min outside any zone). Display-only.
     return list(
         db.execute(
-            select(Zone).where(Zone.org_id == org_id, Zone.valid_to.is_(None))
+            select(Zone).where(
+                Zone.org_id == org_id,
+                Zone.valid_to.is_(None),
+                Zone.zone_type != ZoneType.MINE_BOUNDARY,
+            )
         ).scalars()
     )
 
