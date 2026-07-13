@@ -1,0 +1,12 @@
+# Python
+backend/.venv
+**/__pycache__
+*.pyc
+
+# Secrets — never commit
+.env
+*.env
+firmware/sketch_jul10a/config.h
+
+# OS cruft
+.DS_Store
