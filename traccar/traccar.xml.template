@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE properties SYSTEM 'http://java.sun.com/dtd/properties.dtd'>
+<properties>
+
+    <!-- Documentation: https://www.traccar.org/configuration-file/
+         Templated at container startup by entrypoint.sh (sed substitution) — real
+         credentials come from Railway environment variables, never committed here. -->
+
+    <entry key='database.driver'>org.postgresql.Driver</entry>
+    <entry key='database.url'>__DB_URL__</entry>
+    <entry key='database.user'>__DB_USER__</entry>
+    <entry key='database.password'>__DB_PASSWORD__</entry>
+
+    <!-- Forward every position to the FastAPI service (CLAUDE.md architecture:
+         Traccar -> webhook -> FastAPI -> Postgres). backend resolves via Railway's
+         private networking (RAILWAY_PRIVATE_DOMAIN), plain http:// since traffic is
+         already WireGuard-encrypted between Railway services. -->
+    <entry key='forward.url'>__FORWARD_URL__</entry>
+    <entry key='forward.type'>json</entry>
+
+</properties>
