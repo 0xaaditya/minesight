@@ -18,6 +18,7 @@ def _snapshot(zone: Zone) -> dict:
         "name": zone.name,
         "zone_type": zone.zone_type.value,
         "geometry": zone.geometry,
+        "speed_limit_kmph": zone.speed_limit_kmph,
     }
 
 
@@ -33,6 +34,7 @@ def create_zone(payload: ZoneCreate, db: Session = Depends(get_db)):
         name=payload.name,
         zone_type=payload.zone_type,
         geometry=payload.geometry,
+        speed_limit_kmph=payload.speed_limit_kmph,
     )
     db.add(zone)
     db.flush()
@@ -68,6 +70,7 @@ def update_zone(zone_key: uuid.UUID, payload: ZoneCreate, db: Session = Depends(
         name=payload.name,
         zone_type=payload.zone_type,
         geometry=payload.geometry,
+        speed_limit_kmph=payload.speed_limit_kmph,
         valid_from=now,
     )
     db.add(new_version)

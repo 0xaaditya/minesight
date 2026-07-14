@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import positions, trips, vehicles, webhook, zones
+from app.routers import events, positions, trips, vehicles, webhook, zones
 
 app = FastAPI(title="MineSight API")
 
@@ -17,6 +17,7 @@ app.include_router(positions.router)
 app.include_router(webhook.router)
 app.include_router(zones.router)
 app.include_router(trips.router)
+app.include_router(events.router)
 
 
 @app.get("/health")

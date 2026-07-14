@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     traccar_api_url: str | None = None  # e.g. http://traccar:8082/api
     traccar_api_user: str | None = None
     traccar_api_password: str | None = None
+    # IST wall-clock strings ("HH:MM"). start > end (the default) crosses midnight —
+    # that's the normal case, not an edge case, since mining theft windows span night.
+    quiet_hours_start: str = "20:00"
+    quiet_hours_end: str = "06:00"
 
 
 settings = Settings()

@@ -188,6 +188,26 @@ body {
   color: #3a3f44;
 }
 
+.ls-bell-btn {
+  position: relative;
+}
+
+.ls-bell-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
 .ls-breadcrumb {
   display: flex;
   align-items: center;
@@ -605,6 +625,115 @@ body {
   color: #9aa0a6;
   font-size: 12.5px;
   text-align: center;
+}
+
+.ls-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ls-event-list {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.ls-event-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #f0f0ec;
+}
+
+.ls-event-row:last-child {
+  border-bottom: none;
+}
+
+.ls-event-row-unacked {
+  background: #fafaf8;
+}
+
+.ls-event-icon {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ls-event-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.ls-event-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+}
+
+.ls-event-vehicle {
+  font-weight: 700;
+}
+
+.ls-event-label {
+  font-weight: 600;
+}
+
+.ls-event-delayed-tag,
+.ls-event-ongoing-tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.ls-event-delayed-tag {
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.ls-event-ongoing-tag {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.ls-event-meta {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: #6b7075;
+}
+
+.ls-event-acked {
+  flex: none;
+  color: #16a34a;
+  padding-top: 2px;
+}
+
+.ls-event-ack-btn {
+  flex: none;
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid #e5e5e1;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
 }
 
 /* ---------- vehicle detail drawer ---------- */
@@ -1351,14 +1480,36 @@ body {
   gap: 14px;
 }
 
-.ls-detail-back {
+.ls-detail-head-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin-bottom: 10px;
+}
+
+.ls-detail-back {
+  margin-bottom: 0;
+}
+
+.ls-detail-head-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.ls-icon-btn-danger {
+  color: #dc2626;
+  border-color: #fecaca;
 }
 
 .ls-detail-title {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.ls-status-pill-deactivated {
+  background: #f3f4f6;
+  color: #6b7075;
 }
 
 .ls-detail-facts {

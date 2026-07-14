@@ -80,6 +80,20 @@ class TripRowStatus(str, enum.Enum):
     ABORTED = "aborted"
 
 
+class EventType(str, enum.Enum):
+    NIGHT_MOVEMENT = "night_movement"
+    BOUNDARY_EXIT = "boundary_exit"
+    ZONE_OVERSPEED = "zone_overspeed"
+    BREAKDOWN = "breakdown"
+
+
+class EventSeverity(str, enum.Enum):
+    # Theft signatures (night movement, boundary exit) are critical — CLAUDE.md quiet-
+    # hours routing only pages at night for these. Overspeed/breakdown are operational.
+    CRITICAL = "critical"
+    WARNING = "warning"
+
+
 class VehicleStatus(str, enum.Enum):
     """The Samarth-style 5-state taxonomy. Never persisted or independently detected —
     always derived at read time from trip_engine.compute_vehicle_status(), so it can
@@ -122,6 +136,10 @@ class Vehicle(Base):
     manufacturer: Mapped[str] = mapped_column(String, nullable=True)
     capacity_tonnes: Mapped[float] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    # Soft-delete: set instead of a hard DELETE whenever the vehicle has trip/position
+    # history (that history is legal evidence per CLAUDE.md and must outlive the
+    # vehicle record). Null = active. Excluded from GET /vehicles by default.
+    deactivated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
     organization: Mapped["Organization"] = relationship(back_populates="vehicles")
     positions: Mapped[list["Position"]] = relationship(back_populates="vehicle")
@@ -172,6 +190,9 @@ class Zone(Base):
     geometry: Mapped[dict] = mapped_column(JSONB, nullable=False)  # GeoJSON Polygon
     valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     valid_to: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Optional per-zone limit consumed by the event engine's zone_overspeed detector. A
+    # limit on a MINE_BOUNDARY zone acts as the site-wide speed limit.
+    speed_limit_kmph: Mapped[float] = mapped_column(Float, nullable=True)
 
 
 class ZoneAuditLog(Base):
@@ -260,3 +281,55 @@ class VehicleTripState(Base):
     pre_breakdown_status: Mapped[TripCycleStatus] = mapped_column(
         _enum_column(TripCycleStatus), nullable=True
     )
+
+
+class Event(Base):
+    """One row = one episode (open -> ended_at set on close), not one row per position
+    tick — that IS the dedup mechanism (CLAUDE.md: 'one event = one alert'). See
+    event_engine.py for open/close rules per event_type."""
+
+    __tablename__ = "events"
+    __table_args__ = (
+        Index("ix_events_org_event_time", "org_id", "event_time"),
+        Index("ix_events_vehicle_type_open", "vehicle_id", "event_type", "ended_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    vehicle_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("vehicles.id"), nullable=False)
+
+    event_type: Mapped[EventType] = mapped_column(_enum_column(EventType), nullable=False)
+    severity: Mapped[EventSeverity] = mapped_column(_enum_column(EventSeverity), nullable=False)
+
+    # Episode start (triggering position's event_time) vs. wall-clock write time —
+    # same event-time-vs-arrival-time discipline as Position (CLAUDE.md).
+    event_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    ended_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    zone_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("zones.id"), nullable=True)
+    details: Mapped[dict] = mapped_column(JSONB, nullable=True)
+
+    # CLAUDE.md: "late buffered data must produce correct alerts (alerts fired late are
+    # marked delayed)" — set when received_at - event_time exceeds event_engine's
+    # DELAYED_THRESHOLD at the moment this episode opened.
+    delayed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    acknowledged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    # No User model yet (auth deferred) — same convention as ZoneAuditLog.edited_by.
+    acknowledged_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # Reserved for WhatsApp/push delivery (CLAUDE.md alerts spec) — not wired yet.
+    notified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class VehicleEventState(Base):
+    """Per-vehicle ordering guard for event_engine.py, independent of VehicleTripState
+    so event detection stays correct for vehicle types the trip engine never processes
+    (bowsers, excavators, drills, surface miners all still get night_movement checks)."""
+
+    __tablename__ = "vehicle_event_state"
+
+    vehicle_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("vehicles.id"), primary_key=True)
+    last_processed_event_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)

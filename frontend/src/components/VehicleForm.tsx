@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { AlertTriangle } from 'lucide-react'
-import { useCreateVehicle, type VehicleType } from '../api/client'
+import { useCreateVehicle, useUpdateVehicle, type Vehicle, type VehicleType } from '../api/client'
 import { useT } from '../i18n/strings'
 
 const VEHICLE_TYPES: { value: VehicleType; label: string; prefix: string }[] = [
@@ -12,42 +12,48 @@ const VEHICLE_TYPES: { value: VehicleType; label: string; prefix: string }[] = [
   { value: 'surface_miner', label: 'Surface Miner', prefix: 'CSM-' },
 ]
 
-// Rendered inside the register modal. On success the device is also auto-created in
-// Traccar (backend side); if that part fails/was skipped the vehicle is still saved,
-// and we keep the modal open to show the warning instead of silently closing.
-export function VehicleForm({ onDone }: { onDone?: () => void }) {
+// Rendered inside a modal, either registering a new vehicle or editing an existing one
+// (pass `vehicle` to switch to edit mode — same fields, PATCH instead of POST). On
+// success the device is also (re-)registered in Traccar (backend side, and again on
+// edit only if the device ID actually changed); if that part fails/was skipped the
+// vehicle is still saved, and we keep the modal open to show the warning instead of
+// silently closing.
+export function VehicleForm({ vehicle, onDone }: { vehicle?: Vehicle; onDone?: () => void }) {
   const T = useT()
-  const [assetId, setAssetId] = useState('')
-  const [vehicleType, setVehicleType] = useState<VehicleType>('tipper')
-  const [deviceId, setDeviceId] = useState('')
-  const [regNumber, setRegNumber] = useState('')
-  const [manufacturer, setManufacturer] = useState('')
-  const [capacity, setCapacity] = useState('')
+  const isEdit = !!vehicle
+  const [assetId, setAssetId] = useState(vehicle?.asset_id ?? '')
+  const [vehicleType, setVehicleType] = useState<VehicleType>(vehicle?.vehicle_type ?? 'tipper')
+  const [deviceId, setDeviceId] = useState(vehicle?.traccar_unique_id ?? '')
+  const [regNumber, setRegNumber] = useState(vehicle?.registration_number ?? '')
+  const [manufacturer, setManufacturer] = useState(vehicle?.manufacturer ?? '')
+  const [capacity, setCapacity] = useState(vehicle?.capacity_tonnes?.toString() ?? '')
   const createVehicle = useCreateVehicle()
+  const updateVehicle = useUpdateVehicle()
+  const mutation = isEdit ? updateVehicle : createVehicle
 
-  const created = createVehicle.data
-  const traccarWarn =
-    created && (created.traccar_status === 'failed' || created.traccar_status === 'skipped')
+  const result = mutation.data
+  const traccarWarn = result && (result.traccar_status === 'failed' || result.traccar_status === 'skipped')
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    createVehicle.mutate(
-      {
-        asset_id: assetId.trim(),
-        vehicle_type: vehicleType,
-        traccar_unique_id: deviceId.trim() || undefined,
-        registration_number: regNumber.trim() || undefined,
-        manufacturer: manufacturer.trim() || undefined,
-        capacity_tonnes: capacity ? Number(capacity) : undefined,
-      },
-      {
-        onSuccess: (vehicle) => {
-          if (vehicle.traccar_status === 'created' || vehicle.traccar_status === 'exists') {
-            onDone?.()
-          }
-        },
-      },
-    )
+    const payload = {
+      asset_id: assetId.trim(),
+      vehicle_type: vehicleType,
+      traccar_unique_id: deviceId.trim() || undefined,
+      registration_number: regNumber.trim() || undefined,
+      manufacturer: manufacturer.trim() || undefined,
+      capacity_tonnes: capacity ? Number(capacity) : undefined,
+    }
+    const onSuccess = (v: { traccar_status: string | null }) => {
+      if (v.traccar_status === 'created' || v.traccar_status === 'exists' || v.traccar_status === null) {
+        onDone?.()
+      }
+    }
+    if (isEdit) {
+      updateVehicle.mutate({ vehicleId: vehicle.id, ...payload }, { onSuccess })
+    } else {
+      createVehicle.mutate(payload, { onSuccess })
+    }
   }
 
   if (traccarWarn) {
@@ -55,12 +61,12 @@ export function VehicleForm({ onDone }: { onDone?: () => void }) {
       <div className="vehicle-form-warn">
         <p>
           <AlertTriangle size={15} />
-          {T('traccarNotRegistered')} {created!.traccar_detail}
+          {T('traccarNotRegistered')} {result!.traccar_detail}
         </p>
         <button
           type="button"
           onClick={() => {
-            createVehicle.reset()
+            mutation.reset()
             onDone?.()
           }}
         >
@@ -96,7 +102,9 @@ export function VehicleForm({ onDone }: { onDone?: () => void }) {
       <label className="vehicle-form-field">
         <span>{T('deviceUniqueId')}</span>
         {/* What the tracker sends as its OsmAnd `id=`. Blank = same as the asset ID
-            (our ESP32 nodes); Teltonika boxes will use their IMEI here. */}
+            (our ESP32 nodes); Teltonika boxes will use their IMEI here. Changing this
+            on an existing vehicle re-registers the new ID in Traccar — the "device
+            broke, replaced it" flow for hardware whose ID can't be renamed. */}
         <input
           type="text"
           placeholder={assetId.trim() || 'defaults to asset ID'}
@@ -133,10 +141,10 @@ export function VehicleForm({ onDone }: { onDone?: () => void }) {
           onChange={(e) => setCapacity(e.target.value)}
         />
       </label>
-      <button type="submit" disabled={createVehicle.isPending}>
-        {createVehicle.isPending ? 'Registering...' : 'Register Vehicle'}
+      <button type="submit" disabled={mutation.isPending}>
+        {mutation.isPending ? (isEdit ? 'Saving...' : 'Registering...') : isEdit ? T('saveChanges') : T('registerVehicle')}
       </button>
-      {createVehicle.isError && <p className="error">{createVehicle.error.message}</p>}
+      {mutation.isError && <p className="error">{(mutation.error as Error).message}</p>}
     </form>
   )
 }

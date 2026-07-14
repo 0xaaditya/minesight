@@ -37,10 +37,11 @@ export interface Vehicle {
   manufacturer: string | null
   capacity_tonnes: number | null
   created_at: string
+  deactivated_at: string | null
   latest_position: Position | null
   status: VehicleStatus | null
   trip_status: TripCycleStatus | null
-  // POST /vehicles response only: outcome of auto-registering the device in Traccar.
+  // POST/PATCH /vehicles responses only: outcome of registering the device in Traccar.
   traccar_status: 'created' | 'exists' | 'failed' | 'skipped' | null
   traccar_detail: string | null
 }
@@ -54,14 +55,45 @@ export interface VehicleCreatePayload {
   capacity_tonnes?: number
 }
 
+export type VehicleUpdatePayload = Partial<VehicleCreatePayload>
+
+export interface VehicleDeleteResult {
+  action: 'deleted' | 'deactivated'
+  vehicle: Vehicle | null
+}
+
 export interface Zone {
   id: string
   zone_key: string
   name: string
   zone_type: ZoneType
   geometry: { type: 'Polygon'; coordinates: number[][][] }
+  speed_limit_kmph: number | null
   valid_from: string
   valid_to: string | null
+}
+
+// Named FleetEvent, not Event, to avoid shadowing the DOM Event type.
+export type EventType = 'night_movement' | 'boundary_exit' | 'zone_overspeed' | 'breakdown'
+export type EventSeverity = 'critical' | 'warning'
+
+export interface FleetEvent {
+  id: string
+  vehicle_id: string
+  event_type: EventType
+  severity: EventSeverity
+  event_time: string
+  detected_at: string
+  ended_at: string | null
+  latitude: number
+  longitude: number
+  zone_id: string | null
+  details: Record<string, unknown> | null
+  delayed: boolean
+  acknowledged_at: string | null
+  notified_at: string | null
+  vehicle_asset_id: string | null
+  zone_name: string | null
 }
 
 export interface Trip {
@@ -122,6 +154,29 @@ export function useVehicle(vehicleId: string | undefined) {
     queryFn: () => apiFetch<Vehicle>(`/vehicles/${vehicleId}`),
     enabled: !!vehicleId,
     refetchInterval: 5000,
+  })
+}
+
+export function useUpdateVehicle() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ vehicleId, ...payload }: VehicleUpdatePayload & { vehicleId: string }) =>
+      apiFetch<Vehicle>(`/vehicles/${vehicleId}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+    onSuccess: (vehicle) => {
+      queryClient.invalidateQueries({ queryKey: ['vehicles'] })
+      queryClient.invalidateQueries({ queryKey: ['vehicle', vehicle.id] })
+    },
+  })
+}
+
+// Guarded on the backend: hard-deletes only if the vehicle has zero trip/position
+// history, otherwise soft-deactivates it (result.action tells the UI which happened).
+export function useDeleteVehicle() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (vehicleId: string) =>
+      apiFetch<VehicleDeleteResult>(`/vehicles/${vehicleId}`, { method: 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['vehicles'] }),
   })
 }
 
@@ -225,6 +280,7 @@ export interface ZonePayload {
   name: string
   zone_type: ZoneType
   geometry: Zone['geometry']
+  speed_limit_kmph?: number
 }
 
 export function useCreateZone() {
@@ -255,5 +311,21 @@ export function useDeleteZone() {
   return useMutation({
     mutationFn: (zoneKey: string) => apiFetch<void>(`/zones/${zoneKey}`, { method: 'DELETE' }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['zones'] }),
+  })
+}
+
+export function useEvents() {
+  return useQuery({
+    queryKey: ['events'],
+    queryFn: () => apiFetch<FleetEvent[]>('/events?limit=50'),
+    refetchInterval: 5000,
+  })
+}
+
+export function useAckEvent() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (eventId: string) => apiFetch<FleetEvent>(`/events/${eventId}/ack`, { method: 'POST' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['events'] }),
   })
 }

@@ -1,8 +1,20 @@
 import { useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { AlertTriangle, ArrowLeft, Clock, Cpu, Factory, Route as RouteIcon, Weight } from 'lucide-react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Clock,
+  Cpu,
+  Factory,
+  Pencil,
+  Route as RouteIcon,
+  Trash2,
+  Weight,
+  X,
+} from 'lucide-react'
 import {
   todayIST,
+  useDeleteVehicle,
   useExcavatorLoadsRange,
   useTripRoute,
   useVehicle,
@@ -13,6 +25,7 @@ import { statusMeta, VEHICLE_TYPE_LABEL } from '../lib/status'
 import { formatCycleTime, formatDistance, formatIST, formatISTDate, formatLastSeen, minutesSince } from '../lib/format'
 import { TYPE_ICON } from '../lib/vehicleIcons'
 import { TripRouteMap } from '../components/TripRouteMap'
+import { VehicleForm } from '../components/VehicleForm'
 import { useT, type StringKey } from '../i18n/strings'
 
 type Period = 'day' | 'week' | 'all'
@@ -81,10 +94,27 @@ function TripListRow({
 
 export function VehicleDetailPage() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const T = useT()
   const { data: vehicle, isLoading, error } = useVehicle(id)
   const [period, setPeriod] = useState<Period>('day')
   const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null)
+  const [editOpen, setEditOpen] = useState(false)
+  const [justDeactivated, setJustDeactivated] = useState(false)
+  const deleteVehicle = useDeleteVehicle()
+
+  const handleDelete = () => {
+    if (!id || !window.confirm(T('confirmDeleteVehicle'))) return
+    deleteVehicle.mutate(id, {
+      onSuccess: (result) => {
+        if (result.action === 'deleted') {
+          navigate('/vehicles')
+        } else {
+          setJustDeactivated(true)
+        }
+      },
+    })
+  }
 
   const start = period === 'day' ? todayIST() : period === 'week' ? istDaysAgo(6) : undefined
   const end = period === 'all' ? undefined : todayIST()
@@ -124,9 +154,30 @@ export function VehicleDetailPage() {
   return (
     <div className="ls-detail-page">
       <div className="ls-card ls-detail-head">
-        <Link className="ls-table-link ls-detail-back" to="/vehicles">
-          <ArrowLeft size={14} /> {T('back')}
-        </Link>
+        <div className="ls-detail-head-top">
+          <Link className="ls-table-link ls-detail-back" to="/vehicles">
+            <ArrowLeft size={14} /> {T('back')}
+          </Link>
+          <div className="ls-detail-head-actions">
+            <button className="ls-icon-btn" onClick={() => setEditOpen(true)} aria-label={T('edit')}>
+              <Pencil size={15} />
+            </button>
+            <button
+              className="ls-icon-btn ls-icon-btn-danger"
+              onClick={handleDelete}
+              disabled={deleteVehicle.isPending}
+              aria-label={T('deleteVehicle')}
+            >
+              <Trash2 size={15} />
+            </button>
+          </div>
+        </div>
+        {justDeactivated && (
+          <div className="ls-stale-warn">
+            <AlertTriangle size={14} />
+            {T('vehicleDeactivated')}
+          </div>
+        )}
         <div className="ls-detail-title">
           <div className="ls-drawer-icon">
             <Icon size={20} />
@@ -139,6 +190,9 @@ export function VehicleDetailPage() {
             <span className="ls-status-dot" style={{ background: meta.color }} />
             {vehicle.status ? T(vehicle.status) : T('unknown')}
           </span>
+          {vehicle.deactivated_at && (
+            <span className="ls-status-pill ls-status-pill-deactivated">{T('deactivated')}</span>
+          )}
         </div>
         <div className="ls-detail-facts">
           <span>
@@ -223,6 +277,20 @@ export function VehicleDetailPage() {
           )}
         </div>
       </div>
+
+      {editOpen && (
+        <div className="ls-modal-backdrop" onClick={() => setEditOpen(false)}>
+          <div className="ls-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="ls-modal-head">
+              <span className="ls-card-title">{T('editVehicle')}</span>
+              <button className="ls-icon-btn" onClick={() => setEditOpen(false)} aria-label="Close">
+                <X size={16} />
+              </button>
+            </div>
+            <VehicleForm vehicle={vehicle} onDone={() => setEditOpen(false)} />
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import trip_engine
+from app import event_engine, trip_engine
 from app.database import get_db
 from app.models import Position, Vehicle
 from app.schemas import TraccarForwardPayload
@@ -49,5 +49,14 @@ def traccar_forward(payload: TraccarForwardPayload, db: Session = Depends(get_db
         # retry/backlog — the position is already safely stored above.
         db.rollback()
         logger.exception("trip_engine.process_position failed for position %s", position.id)
+
+    # Independent try/except: event detection must run for every vehicle type (trip_engine
+    # skips non-haul types), and a failure in one engine must never starve the other. Runs
+    # after trip_engine so BREAKDOWN detection sees this tick's fresh trip_status.
+    try:
+        event_engine.process_position_events(db, position.id)
+    except Exception:
+        db.rollback()
+        logger.exception("event_engine.process_position_events failed for position %s", position.id)
 
     return {"status": "ok"}

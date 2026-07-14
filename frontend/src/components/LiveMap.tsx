@@ -236,6 +236,7 @@ function ZoneEditorPanel({
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const [zoneType, setZoneType] = useState<ZoneType>('dumping')
+  const [speedLimit, setSpeedLimit] = useState('')
   const createZone = useCreateZone()
   const updateZone = useUpdateZone()
   const deleteZone = useDeleteZone()
@@ -244,12 +245,14 @@ function ZoneEditorPanel({
     setDraw({ mode: 'drawing', editingZone: null, points: [], formOpen: false, entryMode: 'map', coordText: '' })
     setName('')
     setZoneType('dumping')
+    setSpeedLimit('')
   }
 
   const startRedraw = (zone: Zone) => {
     setDraw({ mode: 'drawing', editingZone: zone, points: [], formOpen: false, entryMode: 'map', coordText: '' })
     setName(zone.name)
     setZoneType(zone.zone_type)
+    setSpeedLimit(zone.speed_limit_kmph != null ? String(zone.speed_limit_kmph) : '')
   }
 
   const cancel = () => {
@@ -280,7 +283,10 @@ function ZoneEditorPanel({
           {zones.map((zone) => (
             <li key={zone.id}>
               <span style={{ color: ZONE_META[zone.zone_type].color }}>●</span> {zone.name}{' '}
-              <span className="zone-editor-type">({zone.zone_type})</span>
+              <span className="zone-editor-type">
+                ({zone.zone_type}
+                {zone.speed_limit_kmph != null ? ` · ${zone.speed_limit_kmph} km/h` : ''})
+              </span>
               <div className="zone-editor-row-actions">
                 <button onClick={() => startRedraw(zone)}>Redraw</button>
                 <button
@@ -317,11 +323,15 @@ function ZoneEditorPanel({
 
   const submit = () => {
     const geometry = toGeoJSONPolygon(points)
+    const speed_limit_kmph = speedLimit ? Number(speedLimit) : undefined
     const onSuccess = () => setDraw({ mode: 'idle' })
     if (editingZone) {
-      updateZone.mutate({ zoneKey: editingZone.zone_key, name, zone_type: zoneType, geometry }, { onSuccess })
+      updateZone.mutate(
+        { zoneKey: editingZone.zone_key, name, zone_type: zoneType, geometry, speed_limit_kmph },
+        { onSuccess },
+      )
     } else {
-      createZone.mutate({ name, zone_type: zoneType, geometry }, { onSuccess })
+      createZone.mutate({ name, zone_type: zoneType, geometry, speed_limit_kmph }, { onSuccess })
     }
   }
 
@@ -414,6 +424,14 @@ function ZoneEditorPanel({
               </option>
             ))}
           </select>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={speedLimit}
+            onChange={(e) => setSpeedLimit(e.target.value)}
+            placeholder={T('speedLimitLabel')}
+          />
           <div className="zone-editor-actions">
             <button type="submit" disabled={isSaving}>
               {isSaving ? 'Saving…' : 'Save'}

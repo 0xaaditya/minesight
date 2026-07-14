@@ -17,3 +17,21 @@ def ist_range_bounds(start_day: date, end_day: date) -> tuple[datetime, datetime
     start, _ = ist_day_bounds(start_day)
     _, end = ist_day_bounds(end_day)
     return start, end
+
+
+def _parse_hhmm(value: str) -> int:
+    """'HH:MM' -> minutes since IST midnight."""
+    hour, minute = value.split(":")
+    return int(hour) * 60 + int(minute)
+
+
+def in_quiet_hours(event_time_utc: datetime, start: str, end: str) -> bool:
+    """Whether a UTC timestamp falls in the IST wall-clock quiet-hours window
+    [start, end). start > end (the default 20:00-06:00) crosses midnight — that's the
+    normal path for a mining theft window, not an edge case, so it's tested first."""
+    ist = event_time_utc + IST_OFFSET
+    minute_of_day = ist.hour * 60 + ist.minute
+    start_min, end_min = _parse_hhmm(start), _parse_hhmm(end)
+    if start_min > end_min:
+        return minute_of_day >= start_min or minute_of_day < end_min
+    return start_min <= minute_of_day < end_min

@@ -1,4 +1,6 @@
-import type { TripCycleStatus, VehicleStatus, VehicleType, ZoneType } from '../api/client'
+import type { ComponentType } from 'react'
+import { Gauge, MapPinOff, MoonStar, Wrench } from 'lucide-react'
+import type { EventType, TripCycleStatus, VehicleStatus, VehicleType, ZoneType } from '../api/client'
 
 // Lodestar palette. Single source of truth for status colors — previously
 // duplicated ad hoc between LiveMap.tsx and any dashboard cards.
@@ -44,6 +46,26 @@ export const ZONE_META: Record<ZoneType, { color: string; label: string }> = {
   // Sky — deliberately outside both the zone and status palettes so the site perimeter
   // never reads as an operational state on satellite imagery.
   mine_boundary: { color: '#38BDF8', label: 'Mine Boundary' },
+}
+
+// night_movement/boundary_exit are theft signatures (CLAUDE.md: only these page at
+// night) hence critical/red; zone_overspeed/breakdown are operational, warning/amber.
+export const EVENT_META: Record<
+  EventType,
+  { color: string; tint: string; labelKey: string; icon: ComponentType<{ size?: number }> }
+> = {
+  night_movement: { color: '#DC2626', tint: '#FEF2F2', labelKey: 'eventNightMovement', icon: MoonStar },
+  boundary_exit: { color: '#DC2626', tint: '#FEF2F2', labelKey: 'eventBoundaryExit', icon: MapPinOff },
+  zone_overspeed: { color: '#D97706', tint: '#FFFBEB', labelKey: 'eventZoneOverspeed', icon: Gauge },
+  breakdown: { color: '#D97706', tint: '#FFFBEB', labelKey: 'eventBreakdown', icon: Wrench },
+}
+
+// Lockstep with EventType: a 5th backend event type without a matching entry here
+// would crash the feed render — this fallback lets it degrade instead.
+export const UNKNOWN_EVENT_META = { color: '#6B7280', tint: '#F3F4F6', labelKey: 'unknown', icon: Gauge }
+
+export function eventMeta(eventType: EventType) {
+  return EVENT_META[eventType] ?? UNKNOWN_EVENT_META
 }
 
 export const VEHICLE_TYPE_LABEL: Record<VehicleType, string> = {

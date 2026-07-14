@@ -24,7 +24,7 @@ import {
   Users,
 } from 'lucide-react'
 import { useLang, useT, type Lang } from '../i18n/strings'
-import { todayIST, useVehicles } from '../api/client'
+import { todayIST, useEvents, useVehicles } from '../api/client'
 import { VehicleDrawer } from '../components/VehicleDrawer'
 
 export type ReplayRequest = { vehicleId: string; date: string }
@@ -137,6 +137,9 @@ export function Shell() {
   const location = useLocation()
   const navigate = useNavigate()
   const { data: vehicles } = useVehicles()
+  // Same query as HomePage's event card — React Query dedupes by key, no extra requests.
+  const { data: events } = useEvents()
+  const unackedCount = (events ?? []).filter((e) => !e.acknowledged_at).length
 
   // Prefix match covers nested routes like /vehicles/:id (exact-key lookup would
   // silently fall back to "home" there).
@@ -245,8 +248,12 @@ export function Shell() {
               </button>
             ))}
           </div>
-          <button className="ls-icon-btn" aria-label="Notifications">
+          <button
+            className="ls-icon-btn ls-bell-btn"
+            aria-label={unackedCount > 0 ? `${unackedCount} ${T('unackedEvents')}` : 'Notifications'}
+          >
             <Bell size={17} />
+            {unackedCount > 0 && <span className="ls-bell-badge">{unackedCount > 9 ? '9+' : unackedCount}</span>}
           </button>
           <div className="ls-avatar">
             <User size={16} />
