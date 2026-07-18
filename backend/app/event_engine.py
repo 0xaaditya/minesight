@@ -21,6 +21,7 @@ from datetime import timedelta
 from typing import Optional
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -38,6 +39,7 @@ from app.models import (
     ZoneType,
 )
 from app.time_utils import in_quiet_hours
+from app.trip_engine import ADJACENT_READS_MAX_GAP
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +62,18 @@ def process_position_events(db: Session, position_id: uuid.UUID) -> None:
     if state is None:
         state = VehicleEventState(vehicle_id=vehicle.id)
         db.add(state)
-        db.flush()
+        try:
+            db.flush()
+        except IntegrityError:
+            # Same race as trip_engine.process_position: FOR UPDATE can't lock a row
+            # that doesn't exist yet, so two concurrent deliveries for the same
+            # brand-new vehicle can both try to insert. Re-fetch the winner's row
+            # (guaranteed committed by the time Postgres raises this) instead of
+            # dropping this tick's event detection entirely.
+            db.rollback()
+            state = db.execute(
+                select(VehicleEventState).where(VehicleEventState.vehicle_id == vehicle.id).with_for_update()
+            ).scalar_one()
 
     if state.last_processed_event_time is not None and position.event_time <= state.last_processed_event_time:
         logger.warning(
@@ -99,6 +112,16 @@ def _current_zones(db: Session, org_id: uuid.UUID) -> list[Zone]:
 
 def _is_moving(p: Position) -> bool:
     return p.speed_knots is not None and p.speed_knots > MOVING_KNOTS_THRESHOLD
+
+
+def _reads_adjacent(a: Optional[Position], b: Optional[Position]) -> bool:
+    """Same fix as trip_engine.ADJACENT_READS_MAX_GAP, same reason: a 2-consecutive-
+    reads check only actually debounces jitter if the two STORED reads are temporally
+    adjacent. A tick lost in transit (dropout, WiFi gap) can leave two agreeing reads
+    that straddle a missing sample the truck genuinely flapped across in between."""
+    if a is None or b is None:
+        return False
+    return abs(a.event_time - b.event_time) <= ADJACENT_READS_MAX_GAP
 
 
 def _get_open_event(db: Session, vehicle_id: uuid.UUID, event_type: EventType) -> Optional[Event]:
@@ -149,20 +172,21 @@ def _detect_night_movement(
     open_event = _get_open_event(db, vehicle.id, EventType.NIGHT_MOVEMENT)
     now_in_window = in_quiet_hours(position.event_time, settings.quiet_hours_start, settings.quiet_hours_end)
     moving_now = _is_moving(position)
+    adjacent = _reads_adjacent(position, prev_position)
 
     if open_event is None:
         moving_prev = prev_position is not None and _is_moving(prev_position)
-        if now_in_window and moving_now and moving_prev:
+        if now_in_window and moving_now and moving_prev and adjacent:
             _open_event(
                 db, vehicle, position, EventType.NIGHT_MOVEMENT, EventSeverity.CRITICAL, delayed,
                 details={"speed_kmph": round(position.speed_knots * KNOTS_TO_KMPH, 1)},
             )
     else:
         # Closes on quiet-hours-over immediately (time only moves forward, no debounce
-        # needed there); stationary close still wants 2 agreeing reads.
+        # needed there); stationary close still wants 2 ADJACENT agreeing reads.
         stationary_now = not moving_now
         stationary_prev = prev_position is not None and not _is_moving(prev_position)
-        if not now_in_window or (stationary_now and stationary_prev):
+        if not now_in_window or (stationary_now and stationary_prev and adjacent):
             _close_event(open_event, position)
 
 
@@ -197,12 +221,20 @@ def _detect_boundary_exit(
     if open_event is None:
         # 2 consecutive outside reads with the reading before them inside — avoids
         # false-firing for a vehicle that was already outside when the boundary was
-        # first drawn (e.g. sitting at an off-site workshop).
+        # first drawn (e.g. sitting at an off-site workshop). Both adjacent pairs
+        # (position/prev, prev/prev_prev) must be temporally adjacent too, or a lost
+        # tick could make an in-out-in flap look like a clean exit.
         inside_prev = prev_position is not None and _inside_any(prev_position.latitude, prev_position.longitude, boundary_zones)
         inside_prev_prev = prev_prev_position is not None and _inside_any(
             prev_prev_position.latitude, prev_prev_position.longitude, boundary_zones
         )
-        if not inside_now and prev_position is not None and not inside_prev and inside_prev_prev:
+        if (
+            not inside_now
+            and not inside_prev
+            and inside_prev_prev
+            and _reads_adjacent(position, prev_position)
+            and _reads_adjacent(prev_position, prev_prev_position)
+        ):
             _open_event(
                 db, vehicle, position, EventType.BOUNDARY_EXIT, EventSeverity.CRITICAL, delayed,
                 zone=boundary_zones[0],
@@ -210,7 +242,7 @@ def _detect_boundary_exit(
             )
     else:
         inside_prev = prev_position is not None and _inside_any(prev_position.latitude, prev_position.longitude, boundary_zones)
-        if inside_now and inside_prev:
+        if inside_now and inside_prev and _reads_adjacent(position, prev_position):
             _close_event(open_event, position)
 
 
@@ -242,7 +274,7 @@ def _detect_zone_overspeed(
             and prev_position.speed_knots is not None
             and prev_position.speed_knots * KNOTS_TO_KMPH <= zone.speed_limit_kmph
         )
-        if under_now and under_prev:
+        if under_now and under_prev and _reads_adjacent(position, prev_position):
             _close_event(open_event, position)
         elif speed_kmph is not None:
             details = dict(open_event.details or {})
@@ -262,7 +294,11 @@ def _detect_zone_overspeed(
         z for z in limited if z.zone_type == ZoneType.MINE_BOUNDARY
     ]
     for zone in ordered:
-        if speed_kmph > zone.speed_limit_kmph and prev_speed_kmph > zone.speed_limit_kmph:
+        if (
+            speed_kmph > zone.speed_limit_kmph
+            and prev_speed_kmph > zone.speed_limit_kmph
+            and _reads_adjacent(position, prev_position)
+        ):
             if point_in_polygon(position.latitude, position.longitude, zone.geometry) and point_in_polygon(
                 prev_position.latitude, prev_position.longitude, zone.geometry
             ):

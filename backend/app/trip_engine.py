@@ -25,6 +25,7 @@ from datetime import timedelta
 from typing import Optional
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.geo import haversine_meters, point_in_polygon
@@ -63,6 +64,17 @@ EXCAVATOR_ENTER_RADIUS_M = 20.0
 EXCAVATOR_SUSTAIN_RADIUS_M = 40.0  # 2x enter: tolerates the excavator walking along the face mid-load
 EXCAVATOR_LIVENESS = timedelta(minutes=2)
 NO_COMM_AFTER = timedelta(minutes=10)
+# The generic 2-consecutive-reads anti-flap check (everything except LOADING entry,
+# which has its own dwell gate) implicitly assumed "consecutive" means adjacent in time
+# too — untrue when a tick is lost in transit (dropout, WiFi gap): the two STORED reads
+# that agree may actually straddle a missing sample, e.g. a truck jittering in/out/in
+# across a zone edge where the middle "out" tick never arrived, leaving two "in" reads
+# that agree despite the truck having genuinely flapped. Verified mechanism (simulator
+# sweep, boundary_edge_flapping): a wifi_gap_store_forward modifier suppressed exactly
+# the alternating tick, and the surviving pair confirmed a phantom transition. 3x the
+# nominal 30s cadence gives room for one merely-slow tick without opening the anti-flap
+# hole back up for a real multi-minute gap.
+ADJACENT_READS_MAX_GAP = timedelta(seconds=90)
 
 # A membership is either ("static", Zone) or ("dynamic_excavator", vehicle_id) or None.
 Membership = Optional[tuple]
@@ -86,7 +98,18 @@ def process_position(db: Session, position_id: uuid.UUID) -> None:
             trip_status_since=position.event_time,
         )
         db.add(state)
-        db.flush()
+        try:
+            db.flush()
+        except IntegrityError:
+            # FOR UPDATE above can't lock a row that doesn't exist yet — two concurrent
+            # webhook deliveries for the same brand-new vehicle can both observe "no row"
+            # and both try to insert. Postgres blocks the loser on the unique constraint
+            # until the winner commits, so by the time we get here the winner's row is
+            # guaranteed visible — re-fetch it instead of dropping this tick.
+            db.rollback()
+            state = db.execute(
+                select(VehicleTripState).where(VehicleTripState.vehicle_id == vehicle.id).with_for_update()
+            ).scalar_one()
 
     if state.last_processed_event_time is not None and position.event_time <= state.last_processed_event_time:
         # True reordering/duplicate timestamp — not the verified store-and-forward late-delivery
@@ -114,9 +137,24 @@ def process_position(db: Session, position_id: uuid.UUID) -> None:
             .order_by(Position.event_time.desc())
             .limit(1)
         ).scalar_one_or_none()
+        # Re-derive what membership WAS at prev_position using excavator freshness as of
+        # prev_position's own event_time, not the current tick's. Reusing `excavators`
+        # (fetched relative to `position.event_time`) here is wrong whenever an excavator
+        # goes stale (>EXCAVATOR_LIVENESS) between the two ticks — a truck's own prior
+        # LOADING reading would retroactively re-evaluate to "no membership" even though
+        # it genuinely was inside the circle when recorded, letting a single subsequent
+        # "outside" reading masquerade as 2-consecutive-reads agreement and confirm a
+        # transition one full read early. Verified via direct webhook repro: an excavator
+        # gap spanning >2min around a truck's LOADING exit let one "outside" tick alone
+        # flip trip_status to HAULING, bypassing the anti-flap entirely.
+        prev_excavators = (
+            _fresh_excavator_positions(db, vehicle.org_id, prev_position.event_time)
+            if prev_position is not None
+            else excavators
+        )
         prev_membership = (
             _determine_membership(
-                prev_position.latitude, prev_position.longitude, zones, excavators, state.paired_excavator_id
+                prev_position.latitude, prev_position.longitude, zones, prev_excavators, state.paired_excavator_id
             )
             if prev_position is not None
             else None
@@ -130,8 +168,30 @@ def process_position(db: Session, position_id: uuid.UUID) -> None:
         else:
             state.paired_excavator_id = None
 
-        confirmed = membership is not None and prev_membership is not None and _same_membership(membership, prev_membership)
-        confirmed_none = membership is None and prev_membership is None
+        reads_adjacent = (
+            prev_position is not None and (position.event_time - prev_position.event_time) <= ADJACENT_READS_MAX_GAP
+        )
+        confirmed = (
+            reads_adjacent
+            and membership is not None
+            and prev_membership is not None
+            and _same_membership(membership, prev_membership)
+        )
+        confirmed_none = reads_adjacent and membership is None and prev_membership is None
+
+        if (confirmed or confirmed_none) and _is_stationary(position) and _is_stationary(prev_position):
+            # A vehicle that never moved cannot have genuinely crossed a zone boundary —
+            # if both confirming reads show ~0 speed, 2 agreeing reads can still happen by
+            # pure GPS jitter (verified: simulator sweep, boundary_edge_flapping, zero
+            # suppressed ticks, all reads adjacent — jitter alone produced 2 agreeing
+            # "inside" reads and opened a phantom trip). The adjacency gate above only
+            # catches jitter masked by a *dropped* tick; this catches jitter with nothing
+            # dropped at all. Demand a 3rd adjacent, same-side stationary read before
+            # trusting it. A genuinely moving vehicle (either read above threshold) skips
+            # this — real transitions during actual driving are unaffected.
+            if not _third_read_agrees(db, vehicle, prev_position, membership, confirmed_none, zones, state):
+                confirmed = False
+                confirmed_none = False
 
         _apply_zone_transition(
             db, vehicle, state, position,
@@ -194,7 +254,17 @@ def _active_zones(db: Session, org_id: uuid.UUID) -> list[Zone]:
 def _fresh_excavator_positions(db: Session, org_id: uuid.UUID, as_of) -> list[tuple[Vehicle, Position]]:
     cutoff = as_of - EXCAVATOR_LIVENESS
     excavators = db.execute(
-        select(Vehicle).where(Vehicle.org_id == org_id, Vehicle.vehicle_type == VehicleType.EXCAVATOR)
+        # deactivated_at filter: a retired excavator must not keep projecting a dynamic
+        # loading circle. Normally its positions age out within EXCAVATOR_LIVENESS
+        # anyway, but if the hardware keeps transmitting after the vehicle record is
+        # retired (device moved to another machine, or deactivation raced a live
+        # device), trucks could still pair with — and credit loads to — a vehicle the
+        # owner deleted. Same convention as event_engine's deactivated-vehicle skip.
+        select(Vehicle).where(
+            Vehicle.org_id == org_id,
+            Vehicle.vehicle_type == VehicleType.EXCAVATOR,
+            Vehicle.deactivated_at.is_(None),
+        )
     ).scalars().all()
     result = []
     for ex in excavators:
@@ -248,6 +318,43 @@ def _same_membership(a: Membership, b: Membership) -> bool:
     if a[0] != b[0]:
         return False
     return a[1].id == b[1].id
+
+
+def _is_stationary(position: Optional[Position]) -> bool:
+    return position is not None and position.speed_knots is not None and position.speed_knots <= STATIONARY_KNOTS_THRESHOLD
+
+
+def _third_read_agrees(
+    db: Session,
+    vehicle: Vehicle,
+    prev_position: Position,
+    membership: Membership,
+    confirmed_none: bool,
+    zones: list[Zone],
+    state: VehicleTripState,
+) -> bool:
+    """One more adjacent, agreeing read before trusting a transition that both confirming
+    reads showed as stationary — see the ADJACENT_READS_MAX_GAP-adjacent call site for why.
+    Excavator freshness is re-derived as of THIS read's own event_time (same reasoning as
+    the prev_membership fix above), not the current tick's, to avoid reintroducing that bug."""
+    prev_prev_position = db.execute(
+        select(Position)
+        .where(Position.vehicle_id == vehicle.id, Position.event_time < prev_position.event_time)
+        .order_by(Position.event_time.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if prev_prev_position is None:
+        return False
+    if (prev_position.event_time - prev_prev_position.event_time) > ADJACENT_READS_MAX_GAP:
+        return False
+    prev_prev_excavators = _fresh_excavator_positions(db, vehicle.org_id, prev_prev_position.event_time)
+    prev_prev_membership = _determine_membership(
+        prev_prev_position.latitude, prev_prev_position.longitude, zones, prev_prev_excavators,
+        state.paired_excavator_id,
+    )
+    if confirmed_none:
+        return prev_prev_membership is None
+    return prev_prev_membership is not None and _same_membership(prev_prev_membership, membership)
 
 
 def _zone_target_status(membership: Membership) -> Optional[TripCycleStatus]:
@@ -341,9 +448,23 @@ def _open_loading_trip(
     if state.current_trip_id is not None:
         open_trip = db.get(Trip, state.current_trip_id)
         if open_trip is not None and open_trip.status == TripRowStatus.IN_PROGRESS:
-            # Re-entering LOADING before ever reaching DUMPING — the previous attempt
-            # never completed; abort it rather than leave a phantom open row.
-            open_trip.status = TripRowStatus.ABORTED
+            if open_trip.dumped_at is not None:
+                # It already dumped — the cycle genuinely finished, and only the
+                # RETURNING-confirmation tick(s) went missing (verified mechanism: a
+                # GPS dropout spanning the truck's exit from the dump zone swallows the
+                # "2 consecutive reads outside" pair that would normally close this out
+                # — see simulator/README.md finding #3). Re-entering LOADING is itself
+                # proof the vehicle made it back, so complete the trip here rather than
+                # mislabel a successful cycle as aborted.
+                open_trip.status = TripRowStatus.COMPLETED
+                open_trip.completed_at = position.event_time
+                open_trip.trip_distance_m = _path_distance_m(
+                    db, vehicle.id, open_trip.started_at, position.event_time
+                )
+            else:
+                # Never reached DUMPING at all — the previous attempt genuinely never
+                # completed; abort it rather than leave a phantom open row.
+                open_trip.status = TripRowStatus.ABORTED
 
     kind, ref = membership
     trip = Trip(

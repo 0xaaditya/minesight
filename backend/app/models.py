@@ -168,6 +168,13 @@ class Position(Base):
     # Distance-between-two-moments is a delta of this, not a re-summed breadcrumb —
     # we don't rebuild what Traccar provides (CLAUDE.md).
     total_distance_m: Mapped[float] = mapped_column(Float, nullable=True)
+    # Forward-compat plumbing (migration 0007): real firmware doesn't send these yet,
+    # but the simulator does and Traccar already forwards them under these attribute
+    # keys. No detector reads them yet — fuel classifier / driver-session phases.
+    ignition: Mapped[bool] = mapped_column(Boolean, nullable=True)
+    battery_level: Mapped[float] = mapped_column(Float, nullable=True)
+    fuel_raw: Mapped[float] = mapped_column(Float, nullable=True)  # uncalibrated; litres conversion is the classifier's job
+    driver_uid: Mapped[str] = mapped_column(String, nullable=True)
     raw: Mapped[dict] = mapped_column(JSONB, nullable=True)
 
     vehicle: Mapped["Vehicle"] = relationship(back_populates="positions")

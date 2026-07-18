@@ -54,6 +54,18 @@ class PositionOut(BaseModel):
     course: Optional[float]
     hdop: Optional[float]
     satellites: Optional[int]
+    # Forward-compat only (migration 0007) — no detector reads these yet.
+    ignition: Optional[bool] = None
+    battery_level: Optional[float] = None
+    fuel_raw: Optional[float] = None
+    driver_uid: Optional[str] = None
+
+
+class VehicleStatsOut(BaseModel):
+    """Live period stats for the vehicle detail page — distance today, so far only.
+    None when there aren't at least 2 positions in the window to derive a delta from."""
+
+    distance_m: Optional[float] = None
 
 
 class VehicleOut(BaseModel):

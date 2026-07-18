@@ -37,6 +37,13 @@ def traccar_forward(payload: TraccarForwardPayload, db: Session = Depends(get_db
         hdop=pos.attributes.get("hdop"),
         satellites=pos.attributes.get("sat"),
         total_distance_m=pos.attributes.get("totalDistance"),
+        # Forward-compat only (migration 0007) — verified against a real stored
+        # Traccar forward payload: OsmAnd's `batt=`/`fuel=`/`driver=`/`ignition=` arrive
+        # here as `batteryLevel`/`fuel`/`driver`/`ignition`. No detector reads these yet.
+        ignition=pos.attributes.get("ignition"),
+        battery_level=pos.attributes.get("batteryLevel"),
+        fuel_raw=pos.attributes.get("fuel"),
+        driver_uid=pos.attributes.get("driver"),
         raw=payload.model_dump(mode="json"),
     )
     db.add(position)
