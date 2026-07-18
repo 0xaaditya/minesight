@@ -266,6 +266,21 @@ export function useExcavatorLoadsRange(
   })
 }
 
+export interface VehicleStats {
+  distance_m: number | null
+}
+
+// Live "Distance" tile — works for every vehicle type (excavators/bowsers included),
+// unlike the trip-derived tiles which only make sense for haul-cycle vehicles.
+export function useVehicleStats(vehicleId: string | undefined, start: string | undefined, end: string | undefined) {
+  return useQuery({
+    queryKey: ['vehicle-stats', vehicleId, start ?? 'all', end ?? 'all'],
+    queryFn: () => apiFetch<VehicleStats>(`/vehicles/${vehicleId}/stats${rangeQuery(start, end)}`),
+    enabled: !!vehicleId,
+    refetchInterval: 5000,
+  })
+}
+
 // One trip's breadcrumb: bounded on both ends so it doesn't drag in the rest of the
 // day. Historical once fetched — no polling.
 export function useTripRoute(vehicleId: string | undefined, sinceIso: string | undefined, untilIso: string | undefined) {

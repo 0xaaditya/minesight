@@ -261,7 +261,7 @@ export function Shell() {
         </header>
 
         <div className="ls-content">
-          <Outlet context={{ openVehicle: setSelectedVehicleId, replay, setReplay }} />
+          <Outlet context={{ openVehicle: setSelectedVehicleId, selectedVehicleId, replay, setReplay }} />
         </div>
       </div>
 

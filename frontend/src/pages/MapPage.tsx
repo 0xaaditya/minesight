@@ -14,6 +14,7 @@ const STATUS_ORDER: VehicleStatus[] = ['running', 'idle', 'breakdown', 'no_comm'
 
 type OutletCtx = {
   openVehicle: (id: string) => void
+  selectedVehicleId: string | null
   replay: ReplayRequest | null
   setReplay: (replay: ReplayRequest | null) => void
 }
@@ -21,7 +22,7 @@ type Filter = 'all' | VehicleStatus
 
 export function MapPage() {
   const { data: vehicles, isLoading, error } = useVehicles()
-  const { openVehicle, replay, setReplay } = useOutletContext<OutletCtx>()
+  const { openVehicle, selectedVehicleId, replay, setReplay } = useOutletContext<OutletCtx>()
   const [listOpen, setListOpen] = useState(true)
   const [filter, setFilter] = useState<Filter>('all')
   const [replayIndex, setReplayIndex] = useState(0)
@@ -136,6 +137,7 @@ export function MapPage() {
           <LiveMap
             vehicles={vehicles}
             onSelectVehicle={openVehicle}
+            focusVehicleId={replay ? null : selectedVehicleId}
             replay={
               replay && replayVehicle
                 ? { vehicle: replayVehicle, positions: routePositions ?? [], index: replayIndex }

@@ -90,7 +90,11 @@ export function VehicleDrawer({
   // the excavator-facing /loads view instead and show "trucks filled" (see backend
   // trips.py list_loads).
   const isExcavator = vehicle.vehicle_type === 'excavator'
-  const { data: trips, isLoading: tripsLoading } = useVehicleTrips(vehicle.id, todayIST(), !isExcavator)
+  // A bowser never runs haul cycles — its drawer shows refuelling events instead of
+  // trips (placeholder until fuel-level sensing exists; the planned attribution is
+  // "nearby vehicle's fuel rose while parked beside the bowser → bowser filled it").
+  const isBowser = vehicle.vehicle_type === 'bowser'
+  const { data: trips, isLoading: tripsLoading } = useVehicleTrips(vehicle.id, todayIST(), !isExcavator && !isBowser)
   const { data: loads, isLoading: loadsLoading } = useExcavatorLoads(vehicle.id, todayIST(), isExcavator)
   const cyclesToday = trips?.filter((t) => t.status === 'completed').length
   const trucksFilledToday = loads?.length
@@ -183,7 +187,15 @@ export function VehicleDrawer({
             </div>
           </div>
 
-          {isExcavator ? (
+          {isBowser ? (
+            <div className="ls-drawer-panel">
+              <div className="ls-drawer-panel-head">
+                <FuelIcon size={14} />
+                {T('refuelEvents')}
+              </div>
+              <div className="ls-drawer-placeholder">{T('refuelPlaceholder')}</div>
+            </div>
+          ) : isExcavator ? (
             <div className="ls-drawer-panel">
               <div className="ls-drawer-panel-head">
                 <Route size={14} />

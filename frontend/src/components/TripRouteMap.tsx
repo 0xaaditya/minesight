@@ -1,8 +1,9 @@
 import { useEffect } from 'react'
 import L from 'leaflet'
-import { CircleMarker, MapContainer, Polyline, TileLayer, useMap } from 'react-leaflet'
-import type { Position } from '../api/client'
+import { CircleMarker, MapContainer, Polygon, Polyline, TileLayer, Tooltip, useMap } from 'react-leaflet'
+import type { Position, Zone } from '../api/client'
 import { DEFAULT_CENTER, ESRI_ATTRIBUTION, ESRI_WORLD_IMAGERY } from '../lib/map'
+import { ZONE_META } from '../lib/status'
 
 const ROUTE_COLOR = '#2563EB'
 const START_COLOR = '#16A34A'
@@ -22,9 +23,18 @@ function FitBounds({ positions }: { positions: Position[] }) {
 }
 
 // Small single-purpose map for the vehicle detail page: one trip's breadcrumb with
-// start/end markers. Deliberately NOT a LiveMap mode — no zones, fleet markers, or
-// editor, just the route.
-export function TripRouteMap({ positions, isLoading }: { positions: Position[]; isLoading: boolean }) {
+// start/end markers, plus the trip's own load/dump zone polygons for context (same
+// fill/dash conventions as LiveMap's zonePathOptions). Deliberately NOT a LiveMap
+// mode — no fleet markers or editor, just this trip.
+export function TripRouteMap({
+  positions,
+  isLoading,
+  zones = [],
+}: {
+  positions: Position[]
+  isLoading: boolean
+  zones?: Zone[]
+}) {
   const start = positions[0]
   const end = positions[positions.length - 1]
   return (
@@ -36,6 +46,17 @@ export function TripRouteMap({ positions, isLoading }: { positions: Position[]; 
         zoomControl={false}
       >
         <TileLayer url={ESRI_WORLD_IMAGERY} attribution={ESRI_ATTRIBUTION} />
+        {zones.map((zone) => (
+          <Polygon
+            key={zone.id}
+            positions={zone.geometry.coordinates[0].map(([lon, lat]) => [lat, lon] as [number, number])}
+            pathOptions={{ color: ZONE_META[zone.zone_type].color, weight: 2, fillOpacity: 0.12 }}
+          >
+            <Tooltip sticky>
+              {zone.name} ({ZONE_META[zone.zone_type].label})
+            </Tooltip>
+          </Polygon>
+        ))}
         {positions.length > 0 && (
           <>
             <FitBounds positions={positions} />

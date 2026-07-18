@@ -18,7 +18,9 @@ import {
   useExcavatorLoadsRange,
   useTripRoute,
   useVehicle,
+  useVehicleStats,
   useVehicleTripsRange,
+  useZones,
   type Trip,
 } from '../api/client'
 import { statusMeta, VEHICLE_TYPE_LABEL } from '../lib/status'
@@ -42,9 +44,10 @@ function istDaysAgo(days: number): string {
 
 // Dummy demo indicators (explicit user request) until the fuel classifier and
 // engine-hour pipelines exist — each renders with a visible "Sample data" badge so
-// they can't be mistaken for real numbers.
+// they can't be mistaken for real numbers. Distance used to be here too; it's now a
+// real value from GET /vehicles/{id}/stats (Traccar's own odometer, CLAUDE.md: don't
+// rebuild what Traccar provides) — see the ls-stat-tiles block below.
 const SAMPLE_TILES: { labelKey: StringKey; value: string }[] = [
-  { labelKey: 'distance', value: '142 km' },
   { labelKey: 'engineHours', value: '38.5 h' },
   { labelKey: 'fuelUsed', value: '260 L' },
 ]
@@ -54,13 +57,20 @@ function TripListRow({
   isExcavator,
   selected,
   onSelect,
+  zoneNameById,
 }: {
   trip: Trip
   isExcavator: boolean
   selected: boolean
   onSelect: () => void
+  zoneNameById: Map<string, string>
 }) {
   const T = useT()
+  // Load source (excavator asset or loading-zone name) → dump zone name, so the row
+  // itself says where the material came from and went, not just when.
+  const loadLabel =
+    !isExcavator && (trip.load_excavator_asset_id ?? (trip.load_zone_id ? zoneNameById.get(trip.load_zone_id) : null))
+  const dumpLabel = trip.dump_zone_id ? zoneNameById.get(trip.dump_zone_id) : null
   return (
     <button className={`ls-detail-trip-row${selected ? ' ls-detail-trip-row-selected' : ''}`} onClick={onSelect}>
       <div className="ls-trip-row-top">
@@ -74,7 +84,11 @@ function TripListRow({
         <span className={`ls-trip-status ls-trip-status-${trip.status}`}>{T(trip.status)}</span>
       </div>
       <div className="ls-trip-row-meta">
-        {trip.load_excavator_asset_id && !isExcavator && <span>{trip.load_excavator_asset_id}</span>}
+        {(loadLabel || dumpLabel) && (
+          <span>
+            {loadLabel ?? '—'} → {dumpLabel ?? '—'}
+          </span>
+        )}
         {trip.haul_distance_m != null && (
           <span>
             {T('leadDistance')} {formatDistance(trip.haul_distance_m)}
@@ -122,6 +136,7 @@ export function VehicleDetailPage() {
   const isExcavator = vehicle?.vehicle_type === 'excavator'
   const tripsQuery = useVehicleTripsRange(id, start, end, !!vehicle && !isExcavator)
   const loadsQuery = useExcavatorLoadsRange(id, start, end, !!vehicle && isExcavator)
+  const statsQuery = useVehicleStats(id, start, end)
   const rows = (isExcavator ? loadsQuery.data : tripsQuery.data) ?? []
   const rowsLoading = isExcavator ? loadsQuery.isLoading : tripsQuery.isLoading
   // Backend returns oldest-first; the owner wants the latest trip on top.
@@ -129,12 +144,30 @@ export function VehicleDetailPage() {
   const tripCount = isExcavator ? rows.length : rows.filter((t) => t.status === 'completed').length
 
   // Stable per selected trip — a fresh new Date() per render would churn the query key.
-  const routeUntil = useMemo(
-    () => (selectedTrip ? selectedTrip.completed_at ?? selectedTrip.dumped_at ?? new Date().toISOString() : undefined),
+  const routeUntil = useMemo(() => {
+    if (!selectedTrip) return undefined
+    if (selectedTrip.completed_at) return selectedTrip.completed_at
+    if (selectedTrip.dumped_at) return selectedTrip.dumped_at
+    // Aborted trips have neither timestamp: they end the moment the vehicle's NEXT
+    // trip opens (that's what marked them aborted), so bound the route there. The old
+    // fallthrough to "now" swept the vehicle's entire subsequent day of driving into
+    // one giant route polyline. A trip with no successor really is still running, so
+    // "now" stays correct only for that case.
+    const successor = rows
+      .filter((t) => t.id !== selectedTrip.id && t.started_at > selectedTrip.started_at)
+      .reduce<Trip | null>((best, t) => (best == null || t.started_at < best.started_at ? t : best), null)
+    return successor?.started_at ?? new Date().toISOString()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedTrip?.id],
-  )
+  }, [selectedTrip?.id, rows])
   const routeQuery = useTripRoute(selectedTrip ? id : undefined, selectedTrip?.started_at, routeUntil)
+
+  // Zone context for the route map + trip rows: id -> zone, current versions only.
+  const { data: zones } = useZones()
+  const zoneNameById = useMemo(() => new Map((zones ?? []).map((z) => [z.id, z.name])), [zones])
+  const tripZones = useMemo(() => {
+    if (!selectedTrip || !zones) return []
+    return zones.filter((z) => z.id === selectedTrip.load_zone_id || z.id === selectedTrip.dump_zone_id)
+  }, [selectedTrip?.id, zones])
 
   if (isLoading) return <div className="ls-detail-page"><p className="ls-placeholder-body">Loading…</p></div>
   if (error || !vehicle) {
@@ -236,6 +269,16 @@ export function VehicleDetailPage() {
           <div className="ls-stat-tile-label">{isExcavator ? T('trucksFilled') : T('tripsInPeriod')}</div>
           <div className="ls-stat-tile-value">{rowsLoading ? '…' : tripCount}</div>
         </div>
+        <div className="ls-stat-tile">
+          <div className="ls-stat-tile-label">{T('distance')}</div>
+          <div className="ls-stat-tile-value">
+            {statsQuery.isLoading
+              ? '…'
+              : statsQuery.data?.distance_m != null
+                ? formatDistance(statsQuery.data.distance_m)
+                : '—'}
+          </div>
+        </div>
         {SAMPLE_TILES.map((tile) => (
           <div className="ls-stat-tile" key={tile.labelKey}>
             <div className="ls-stat-tile-label">
@@ -263,6 +306,7 @@ export function VehicleDetailPage() {
                   isExcavator={isExcavator}
                   selected={selectedTrip?.id === t.id}
                   onSelect={() => setSelectedTrip(selectedTrip?.id === t.id ? null : t)}
+                  zoneNameById={zoneNameById}
                 />
               ))}
             </div>
@@ -271,7 +315,7 @@ export function VehicleDetailPage() {
         <div className="ls-card ls-detail-route">
           <div className="ls-card-title">{T('tripRoute')}</div>
           {selectedTrip ? (
-            <TripRouteMap positions={routeQuery.data ?? []} isLoading={routeQuery.isLoading} />
+            <TripRouteMap positions={routeQuery.data ?? []} isLoading={routeQuery.isLoading} zones={tripZones} />
           ) : (
             <div className="ls-drawer-placeholder ls-detail-route-empty">{T('selectTrip')}</div>
           )}

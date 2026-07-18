@@ -101,6 +101,26 @@ function replayIcon(assetId: string, vehicleType: VehicleType): L.DivIcon {
   })
 }
 
+// Traccar-style "locate": clicking a vehicle (list row or marker) pans/zooms the map to
+// its current position. Fires only when the selected id changes, not on every position
+// refresh, or the map would jerk back to center on every 5s poll while a vehicle stays
+// selected. A close-in zoom is only forced when the user is currently zoomed out further
+// than that — an already-close view isn't yanked to a fixed zoom level.
+const LOCATE_MIN_ZOOM = 17
+
+function FlyToVehicle({ vehicles, vehicleId }: { vehicles: Vehicle[]; vehicleId: string | null }) {
+  const map = useMap()
+  useEffect(() => {
+    if (!vehicleId) return
+    const vehicle = vehicles.find((v) => v.id === vehicleId)
+    if (!vehicle?.latest_position) return
+    const { latitude, longitude } = vehicle.latest_position
+    map.flyTo([latitude, longitude], Math.max(map.getZoom(), LOCATE_MIN_ZOOM))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vehicleId])
+  return null
+}
+
 // Recenters the map on the route once per (vehicle, day) — not on every scrub step,
 // or the user's own pan/zoom while scrubbing would get fought on each slider tick.
 function FitRouteBounds({ positions }: { positions: Position[] }) {
@@ -282,11 +302,10 @@ function ZoneEditorPanel({
         <ul className="zone-editor-list">
           {zones.map((zone) => (
             <li key={zone.id}>
-              <span style={{ color: ZONE_META[zone.zone_type].color }}>●</span> {zone.name}{' '}
-              <span className="zone-editor-type">
-                ({zone.zone_type}
-                {zone.speed_limit_kmph != null ? ` · ${zone.speed_limit_kmph} km/h` : ''})
-              </span>
+              <span style={{ color: ZONE_META[zone.zone_type].color }}>●</span> {zone.name}
+              {zone.speed_limit_kmph != null && (
+                <span className="zone-editor-type"> · {zone.speed_limit_kmph} km/h</span>
+              )}
               <div className="zone-editor-row-actions">
                 <button onClick={() => startRedraw(zone)}>Redraw</button>
                 <button
@@ -450,10 +469,12 @@ function ZoneEditorPanel({
 export function LiveMap({
   vehicles,
   onSelectVehicle,
+  focusVehicleId,
   replay,
 }: {
   vehicles: Vehicle[]
   onSelectVehicle: (vehicleId: string) => void
+  focusVehicleId?: string | null
   replay?: { vehicle: Vehicle; positions: Position[]; index: number } | null
 }) {
   const { data: zones } = useZones()
@@ -472,6 +493,7 @@ export function LiveMap({
           attribution={ESRI_ATTRIBUTION}
         />
         <ZoomControl position="bottomright" />
+        {!replay && <FlyToVehicle vehicles={withPosition} vehicleId={focusVehicleId ?? null} />}
         {zones?.map((zone) => (
           <Polygon
             key={zone.id}
