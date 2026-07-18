@@ -41,6 +41,7 @@ def list_events(
     date_: Optional[date] = Query(default=None, alias="date"),
     vehicle_id: Optional[uuid.UUID] = Query(default=None),
     unacknowledged_only: bool = Query(default=False),
+    include_inactive: bool = Query(default=False),
     db: Session = Depends(get_db),
 ):
     stmt = select(Event)
@@ -49,6 +50,13 @@ def list_events(
         stmt = stmt.where(Event.event_time >= start, Event.event_time < end)
     if vehicle_id is not None:
         stmt = stmt.where(Event.vehicle_id == vehicle_id)
+    elif not include_inactive:
+        # Deactivated vehicles (retired hardware, simulator teardown) shouldn't clutter
+        # the live feed or the unacknowledged badge — same default as GET /vehicles.
+        # Explicit vehicle_id lookups still return everything, mirroring GET /vehicles/{id}.
+        stmt = stmt.where(
+            Event.vehicle_id.in_(select(Vehicle.id).where(Vehicle.deactivated_at.is_(None)))
+        )
     if unacknowledged_only:
         stmt = stmt.where(Event.acknowledged_at.is_(None))
     stmt = stmt.order_by(Event.event_time.desc()).limit(limit)
