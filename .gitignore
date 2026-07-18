@@ -1,5 +1,7 @@
 # Python
 backend/.venv
+simulator/.venv
+simulator/runs
 **/__pycache__
 *.pyc
 

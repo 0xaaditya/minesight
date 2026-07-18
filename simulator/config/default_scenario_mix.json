@@ -1,0 +1,24 @@
+{
+  "behaviors": {
+    "full_clean_cycle": 100,
+    "stationary_idle": 100,
+    "aborted_cycle": 4,
+    "anomalous_dump_genuine": 2,
+    "lunch_break_stop": 3,
+    "real_breakdown": 2,
+    "boundary_edge_flapping": 6,
+    "drive_through_no_stop": 3,
+    "short_queued_stop_below_dwell": 5,
+    "truck_queued_outside_enter_radius": 4,
+    "maintenance_yard_movement": 2
+  },
+  "modifiers": {
+    "clean_fix": 75,
+    "degraded_fix_pit_wall": 10,
+    "sub_threshold_speed_jitter_parked": 3,
+    "gps_dropout": 4,
+    "wifi_gap_store_forward": 5,
+    "device_reboot_mid_shift": 1,
+    "duplicate_packet_retry": 2
+  }
+}
